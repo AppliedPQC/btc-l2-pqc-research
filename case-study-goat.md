@@ -15,7 +15,7 @@ GOAT's to fix.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
 | 2 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
-| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK, **wrapped in Groth16/BN254** | wrapper broken by Shor | **GOAT** |
+| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT + upstream Ziren** |
 | 3b | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
 | 4 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
 | 5 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
@@ -82,18 +82,51 @@ signatures. So the pipeline is: **Ziren produces a hash-based STARK proof, that
 proof is wrapped into a constant-size Groth16 proof over BN254, and the Groth16
 verifier is what BitVM2 runs in Bitcoin script.**
 
-**Consequence, and it is a good one.** The quantum-vulnerable component is the
-*final wrapper*, not the proving stack. Ziren's STARK core is already
-post-quantum, and the Winternitz commitment layer is already post-quantum. The
-wrapper exists solely to compress the proof enough to be affordable on Bitcoin.
+**But the STARK core is not post-quantum either.** An earlier draft of this note
+claimed it was, on the reasoning that FRI and Poseidon are hash-based. That is
+wrong, and the counter-example is upstream and documented. Ziren issue
+[#276](https://github.com/ProjectZKM/Ziren/issues/276), *"Replace hash-to-curve
+in multiset hash by quantum safe primitives"*, open since 2025-08-14, states the
+problem in its own words:
 
-The migration is therefore narrower than "replace the proof system": it is
-*remove the Groth16 wrap and verify the STARK directly in Bitcoin script*. The
-cost is script weight — a FRI proof is far larger than Groth16's constant few
-hundred bytes. BitVM2's architecture is unusually well suited to absorbing that,
-because the verifier only executes during a dispute, never on the happy path.
-Whether the resulting challenge transaction is economically viable is the real
-question, and it is measurable today with the existing stack.
+> In our multiset hash, we rely on hash-to-curve to calculate the hash of values
+> of the memory addresses, and consider each hash as the x of a point, then
+> commit the accumulation of all the points in the EC subgroup. **If DLOG
+> hardness is preserved**, prover can not forge another set of scalars for all
+> the points respectively, and hence can not forge the proof of the offline
+> memory checking. […] To achieve quantum safe, we need to remove the DLOG
+> hardness assumption.
+
+So the offline memory-consistency argument — not the polynomial commitment —
+rests on discrete log. A quantum adversary does not need to attack FRI; it
+forges the memory check and with it the execution proof. The candidate
+replacement is a lattice-based homomorphic multiset hash such as LtHash, which
+would remove the DLOG assumption. **This is upstream work in Ziren, not
+something GOAT can fix in `bitvm2-node`, and it gates everything built on top.**
+
+**And the garbling stack is built around Groth16 specifically.** `bitvm2-gc` is
+not a general circuit garbler that happens to be pointed at Groth16; its
+headline crate is `garbled-snark-verifier` and its circuit tree is organised
+around `groth16.rs`, `bn254/`, `dv_snark.rs` and `dv_bn254/`. Swapping the proof
+system therefore does not mean deleting a wrapper — it means rebuilding the
+garbled-circuit stack around a different verifier, which is the single largest
+item in this document.
+
+**Revised scope.** The proof path contains three independent Shor-vulnerable
+layers, not one:
+
+| Layer | Primitive | Quantum status | Where the fix lives |
+| --- | --- | --- | --- |
+| Ziren FRI / Poseidon commitment | hash-based | safe | — |
+| Ziren multiset memory check | **hash-to-curve, DLOG** | **broken** | upstream, Ziren #276 |
+| Groth16 wrap | **BN254 pairing** | **broken** | GOAT |
+| `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
+| WOTS commitment into script | hash-based | safe | — |
+
+The two hash-based layers at the ends are fine. Everything between them depends
+on either DLOG or pairings. Any credible post-quantum plan for this bridge has
+to address all three, in dependency order: Ziren's memory check first, since a
+post-quantum wrapper over a DLOG-dependent execution proof buys nothing.
 
 The cost is size and script weight. Hash-based proofs are substantially larger
 than Groth16's constant-size proof, and BitVM2's economics depend on what fits
@@ -175,6 +208,13 @@ that category. That is a defensible choice and not a vulnerability, but it is a
 *decision*, and for a bridge holding long-lived commitments it deserves to be
 made explicitly rather than inherited from a default. Moving labels and PRF to
 256-bit restores category-5 margin at roughly double the garbling cost.
+
+**`bitvm2-gc` is Groth16-oriented by construction, and that is the structural
+problem.** `bitvm2-node` depends on `bitvm2-gc`, whose entire purpose is
+garbling a Groth16 verifier. So the proof-system choice is not a parameter of
+this architecture; it is baked into the component that implements it. Any move
+off pairings requires rebuilding that component, and that dependency — not the
+wrapper — is the real obstacle.
 
 **Net effect on the post-quantum position: none.** `gc-v2` still uses MuSig2
 (8 files) and Taproot (9 files), so section 4a's key-path exposure is unchanged,
@@ -266,9 +306,10 @@ available immediately, and it closes the easier of the two attacks.
 | 0 | Inventory every signature and proof verification path; add tests asserting no fixed signature-length assumptions | The `VerifySign` 64-byte gate shows these assumptions are load-bearing and invisible |
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
-| 3 | BitVM2: drop the Groth16 wrap and verify the Ziren STARK directly in script; measure script weight and challenge cost | Ziren's core and the Winternitz layer are already PQ-safe; only the wrapper is not. Fixes *soundness*, not just theft |
-| 4 | Rebase `goat-cosmos-sdk` onto SDK ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | Mechanism is upstream and gentle, but gated on the rebase |
-| 5 | Reduce `goat-geth`'s 377-commit lag; track Ethereum account abstraction | Following costs less than diverging; the lag is the real blocker |
+| 3 | Track and support Ziren #276: replace the hash-to-curve multiset hash with a lattice-based homomorphic hash (LtHash) | Gates everything above it — a PQ wrapper over a DLOG-dependent execution proof buys nothing. Upstream, so influence rather than implement |
+| 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap |
+| 5 | Rebase `goat-cosmos-sdk` onto SDK ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | Mechanism is upstream and gentle, but gated on the rebase |
+| 6 | Reduce `goat-geth`'s 377-commit lag; track Ethereum account abstraction | Following costs less than diverging; the lag is the real blocker |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
 ## 6. The honest limit
@@ -292,7 +333,7 @@ Stated so this is not read as more thorough than it is.
 - `x/locking`, `x/bitcoin` and `x/consensusfork` were not audited for further
   signature surfaces.
 - The `goat-cosmos-sdk` fork was not inspected; its divergence determines the
-  phase-4 rebase cost and is the largest remaining unknown.
+  phase-5 rebase cost and is the largest remaining unknown.
 - The BLS12-381 usage in `goat` (2 files, via `gnark-crypto`) was not traced. If
   it is load-bearing for aggregation it is another Shor-exposed surface.
 - The 37 custom `goat-geth` commits were not read individually, so whether any

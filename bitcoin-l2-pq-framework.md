@@ -41,7 +41,7 @@ ownership question explicit before the scheme-selection question.
 | --- | --- | --- | --- | --- |
 | 1 | L1 settlement outputs | secp256k1 / Schnorr | yes | **base layer only** |
 | 2 | Bridge attestation / operator set | secp256k1, Schnorr, MuSig2, BLS | yes | **the L2** |
-| 3 | Bridge proof system | Groth16, PLONK (pairing-based) or STARK (hash-based) | **depends** | **the L2** |
+| 3 | Bridge proof system | Groth16, PLONK (pairing-based) or STARK (hash-based) | **depends, and check inside** | **the L2**, often with upstream |
 | 4 | Bridge data commitments | Merkle / Winternitz / Lamport | **no — hash-based** | already safe |
 | 5 | L2 consensus keys | ed25519, BLS12-381 | yes | **the L2**, via its consensus stack |
 | 6 | L2 execution accounts | secp256k1 ECDSA | yes | the L2, at tooling cost |
@@ -51,10 +51,15 @@ Two rows carry most of the signal.
 **Row 3 is where severity is highest.** A broken *signature* scheme lets an
 attacker steal specific funds. A broken *proof system* lets an attacker forge
 the bridge's notion of truth — minting without deposit, or withdrawing without
-right. Pairing-based systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor
-exactly as ECDSA does. Hash-based systems (STARKs) do not. **Whether an L2's
-bridge is quantum-sound is therefore decided by a proof-system choice usually
-made for performance reasons, years before anyone asked the question.**
+right. Pairing-based systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor exactly
+as ECDSA does. **"STARK" is not by itself an answer, though.** A zkVM's headline
+commitment scheme can be hash-based while an auxiliary argument inside it is
+not: in the stack examined here, the FRI commitment is hash-based but the
+offline memory-consistency check commits memory values as elliptic-curve points
+and its soundness rests explicitly on DLOG hardness. A quantum adversary attacks
+the memory argument, not FRI. **The question to ask is never "is it a STARK"
+but "which assumptions does every argument in this proof rely on" — and the
+answer is often only visible in the project's own issue tracker.**
 
 **Row 4 is the good news, and it is frequently missed.** Bridge constructions
 that commit data via Merkle trees, or that carry values through Bitcoin script
@@ -106,6 +111,14 @@ Collected from the analysis so far; each cost real effort to notice.
   dependency returned zero hits while the files plainly exist in the tree.
   An audit built on code search over a fork-heavy stack will silently miss
   things. Enumerate the git tree instead.
+- **A "hash-based" proof system can still depend on DLOG.** Check every
+  sub-argument, not the headline commitment scheme: permutation arguments,
+  lookup arguments and offline memory checks are all places where an
+  elliptic-curve accumulator can hide inside an otherwise hash-based system.
+- **Ask what a component is *oriented around*, not just what it depends on.** A
+  garbling or proving stack purpose-built for one verifier makes the proof
+  system a structural property rather than a configuration choice — swapping it
+  is a rebuild of that component, and the dependency graph will not show this.
 - **Symmetric-primitive layers are not automatically "post-quantum done".**
   Garbled circuits, hash commitments and MPC layers are built from symmetric
   primitives and survive Shor, but they only protect what they *carry*. If the
