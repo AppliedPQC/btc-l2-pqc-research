@@ -42,7 +42,11 @@ Six findings would have been wrong without that discipline:
 - GOAT runs **no** `cosmos-sdk` fork — the `replace` is commented out — so the
   consensus upgrade is far cheaper than first assessed.
 - The relayer's BLS12-381 **vote key** is a third key type, and the hardest
-  item in the report, because its value is aggregation.
+  item in the report, because its value is aggregation — confirmed in use at a
+  call site, not merely available as an API.
+- **`leanVM` cannot rescue BLS.** It holds no pairing code at all, and proving a
+  BLS verification inside a hash-based zkVM would prove a true statement about a
+  broken primitive. It removes the *need* for BLS rather than fixing it.
 
 ## Status
 

@@ -746,6 +746,13 @@ Collected from the analysis so far; each cost real effort to notice.
   garbling or proving stack purpose-built for one verifier makes the proof
   system a structural property rather than a configuration choice — swapping it
   is a rebuild of that component, and the dependency graph will not show this.
+- **The wrapper trap runs forwards as well as backwards.** It is easy to spot
+  in existing code — a hash-based commitment carrying a curve assertion — and
+  just as easy to *introduce* while migrating, by wrapping a broken primitive in
+  a post-quantum proof system and treating the composition as fixed. Proving
+  that a broken signature verified is a true statement about a dead assumption.
+  A migration step only helps if it changes what is asserted, not merely who
+  attests to it.
 - **Symmetric-primitive layers are not automatically "post-quantum done".**
   Garbled circuits, hash commitments and MPC layers are built from symmetric
   primitives and survive Shor, but they only protect what they *carry*. If the
@@ -815,12 +822,79 @@ SLH-DSA have no aggregation, so replacing BLS naively turns one signature into
 N, at 3309 bytes each. For twenty relayers that is roughly 66 KB where there was
 48 bytes.
 
-This is precisely the problem Ethereum built `leanVM` to solve, one layer down —
-recursive aggregation of hash-based signatures inside a zkVM. GOAT already
-operates a zkVM (Ziren) and a garbling stack, so the ingredients are present.
-But it means the relayer vote path cannot be migrated by swapping a key type,
-and it should be planned as its own workstream rather than folded into the
-attestation-key change.
+**Aggregation is confirmed in use, not merely available.** An earlier draft
+inferred this from the presence of an aggregate API, which is weaker evidence
+than it sounds. The call site is `x/relayer/keeper/proposal.go:66`:
+
+```go
+sigdoc := types.VoteSignDoc(req.MethodName(), sdkctx.ChainID(),
+                           relayer.Proposer, sequence, relayer.Epoch, req.VoteSigDoc())
+if !goatcrypto.AggregateVerify(pubkeys, sigdoc, req.GetVote().GetSignature()) {
+    return 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "verify aggregation signature failed")
+}
+```
+
+which resolves to `signature.FastAggregateVerify(true, pubkeys, msg, blsMode)` in
+`pkg/crypto/blst.go`. `FastAggregateVerify` is specifically the
+many-signers-one-message case, and the surrounding code confirms the shape: a
+participation bitmap selects voters, the proposer's `VoteKey` and each selected
+voter's are collected, participation is checked against `relayer.Threshold()`,
+and **one** aggregate signature is verified against **N** public keys over a
+single `sigdoc`. Relayer consensus is therefore a threshold vote carried by one
+48-byte signature regardless of signer count — and the bitmap design exists
+precisely so that signer count can grow.
+
+### `leanVM` is not a way to keep BLS
+
+The obvious hope is to wrap the existing BLS verification in a post-quantum
+zkVM: prove inside `leanVM` that the aggregate verified, and inherit the zkVM's
+hash-based soundness. That does not work, in two distinct senses, and the second
+is a restatement of this report's central trap.
+
+**Mechanically, there is nothing to build on.** `leanEthereum/leanVM` contains no
+BLS or pairing code at all — searching its tree for `bls`, `pairing` and `bls12`
+returns zero files. What it is built from is KoalaBear (505 references),
+Poseidon (75) and WHIR (48), with XMSS across 26 files and a dedicated
+`crates/rec_aggregation`. It is purpose-built to recursively aggregate
+*hash-based* signatures. A BLS verifier could be written as a guest program, but
+emulating BLS12-381 pairing arithmetic over a 31-bit field is precisely the work
+that EVM chains give a native precompile to avoid.
+
+**And even if it were built, it would buy nothing.** Proving "this BLS aggregate
+verified" inside a hash-based zkVM yields a post-quantum-sound *proof* of a
+quantum-broken *statement*. An adversary who can forge BLS signatures forges one
+and then honestly proves that it verified; the zkVM faithfully attests to a true
+claim about a dead assumption. This is the same error as Winternitz commitments
+carrying a Groth16 proof and garbled circuits garbling a Groth16 verifier — the
+third instance in this one stack, and the first that would be a *prospective*
+mistake rather than an existing one.
+
+**What `leanVM` actually offers is the removal of the need for BLS.** BLS was
+chosen for one property, aggregation. Hash-based signatures are post-quantum but
+do not aggregate. Recursive proving restores that property. The path is
+therefore:
+
+```
+BLS                    hash-based signatures       + recursive aggregation
+(aggregates, broken) →  (safe, N x 3309 bytes)  →  (aggregation restored)
+```
+
+not "keep BLS and add a zkVM". The ordering matters: the signature scheme is
+replaced first, and recursion recovers what the replacement costs.
+
+Concretely for GOAT, `AggregateVerify` at `proposal.go:66` is not wrapped, it is
+replaced, with the threshold-and-bitmap voting logic rebuilt around a hash-based
+scheme plus recursion. GOAT already operates a zkVM (Ziren) and a garbling
+stack, so the ingredients are unusually close to hand — but this is an
+architectural workstream, not a key-type change, and it should be planned
+separately from the attestation-key work.
+
+### Follow-up checks, 2026-07-31
+
+| Checked | Result |
+| --- | --- |
+| Is BLS aggregation actually *used*, or just available? | **Used.** `x/relayer/keeper/proposal.go:66` calls `AggregateVerify`, resolving to `FastAggregateVerify` over a bitmap-selected voter set against `relayer.Threshold()`. Upgraded from inference to a call site |
+| Could `leanVM` aggregate BLS instead? | **No.** Zero `bls`/`pairing`/`bls12` files in its tree; it is KoalaBear, Poseidon, WHIR and XMSS with a `rec_aggregation` crate. And proving a BLS verification inside a hash-based zkVM proves a true statement about a broken primitive |
 
 ### Consistency re-check of the base-layer sections, 2026-07-31
 
