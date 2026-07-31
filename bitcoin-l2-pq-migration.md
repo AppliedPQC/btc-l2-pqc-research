@@ -131,7 +131,7 @@ assumption.*
 | | **Bitcoin** | **Ethereum** | **Cosmos** |
 | --- | --- | --- | --- |
 | Core problem | public-key exposure on an immutable ledger | signature size at validator scale | key-type negotiation across chains |
-| Layer attacked first | output type / script | consensus signatures | validator consensus keys |
+| Layer attacked first | output type / script | consensus signatures, and accounts separately | validator consensus keys |
 | PQ scheme chosen | **none yet** | hash-based (XMSS/Winternitz family) | **ML-DSA-65 (FIPS 204)** |
 | Furthest artifact | Draft BIPs | working prototypes | **shipped, opt-in** |
 | Governance style | soft fork, rough consensus | coordinated upgrades | per-chain opt-in + genesis params |
@@ -159,10 +159,35 @@ BIP"**.
 
 That dependency is the finding. Bitcoin has a hardening step and a deadline
 plan, and the deadline plan formally depends on a document that does not yet
-exist. The exposure is not hypothetical: BIP-361 states that as of 1 March 2026
-over 34% of all bitcoin have revealed a public key on chain.
+exist. Checked again on 2026-07-31: the BIPs index still contains exactly one
+post-quantum entry, BIP-361 itself. The exposure is not hypothetical: BIP-361
+states that as of 1 March 2026 over 34% of all bitcoin have revealed a public
+key on chain.
 
-## 5. Ethereum: an aggregation problem
+**The sunset is not a blanket freeze, and an earlier draft of this report
+implied it was.** BIP-361's Phase A (160,000 blocks, roughly three years after
+activation) stops sends to quantum-vulnerable address types. Phase B, two years
+later, does not simply invalidate legacy signatures: it *encumbers* ECDSA and
+Schnorr spends with a **rescue protocol** designed "to rule out quantum
+attackers, but to permit spends from the authentic coin-holders". The mechanism
+is an asymmetry of knowledge — most wallets since 2012 derive keys through
+BIP-32 hardened derivation, so a holder can prove knowledge of a parent extended
+private key that a quantum attacker recovering only the child key would not
+have. The BIP points at ZK-STARK-based rescue protocols and at commit/reveal
+schemes for this.
+
+Two qualifications, both from the BIP itself. Coverage is unresolved: "it
+remains to be seen how much of the legacy Bitcoin supply can be theoretically
+covered by such rescue protocols", and only if the majority is covered will the
+restriction be "at most mildly confiscatory". And **P2PK has no rescue
+protocol** — "it's not currently believed possible to construct a rescue
+protocol for P2PK UTXOs, as no knowledge asymmetry is known" — which is why
+BIP-361's authors separately support an Hourglass-style proposal for those
+outputs. So the coins that genuinely become unspendable are the abandoned ones
+and the ones where no secret asymmetry exists, not the legacy supply as a
+whole.
+
+## 5. Ethereum: an aggregation problem at consensus, an account problem above it
 
 Ethereum's exposure is ordinary — accounts reveal a public key on first spend,
 consensus uses BLS12-381 — but its *constraint* is not. Hash-based signatures
@@ -178,6 +203,26 @@ proposed signature scheme, built on tweakable hash functions and incomparable
 encodings, and grew out of the research implementation `b-wagn/hash-sig`
 (eprint 2025/055). `leanSig`'s README is explicit that the code is unaudited and
 not for production. `pq.ethereum.org` is the coordination hub.
+
+**That is only the consensus front.** An earlier draft of this report described
+Ethereum's plan as an aggregation problem and stopped there, which omitted the
+half that concerns user funds. Accounts have their own two-track story:
+
+- an **emergency track** — Buterin's proposal to hard-fork on evidence of
+  large-scale theft, revert to the last pre-theft block, freeze legacy ECDSA
+  accounts, and let users recover through a transaction carrying a **STARK proof
+  of knowledge of the hash preimage** behind their address, authenticating by a
+  secret that was never exposed on chain;
+- a **structural track** — account abstraction as the migration vehicle.
+  [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) ("Set Code for EOAs",
+  **Final**, shipped in Pectra) lets an EOA delegate to contract code, though its
+  authorisations are themselves secp256k1-signed, so it is a stepping stone
+  rather than a post-quantum mechanism. The dedicated vehicle is
+  [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141) ("Frame Transaction",
+  **Draft**, created 2026-01-29), which supports a slot for an arbitrary
+  post-quantum signature scheme alongside the classical ones.
+
+Nothing post-quantum has shipped to Ethereum mainnet on either front.
 
 ## 6. Cosmos: a negotiation problem, and the one that shipped
 
@@ -211,7 +256,27 @@ type. Post-quantum migration in an interoperable ecosystem is therefore a
 *coordination* problem before it is a cryptographic one — and the failure mode
 is silent until connectivity breaks.
 
-## 7. Synthesis
+## 7. One technique both chains converged on
+
+The two base layers face different problems and have chosen different
+mechanisms, but on the question of *rescuing funds whose key is already
+exposed* they arrived independently at the same answer: **prove knowledge of a
+secret the quantum attacker cannot derive, and verify that proof with a STARK.**
+
+Bitcoin's BIP-361 rescue protocol proves knowledge of a BIP-32 parent extended
+private key, which an attacker who recovered only the child key would not have.
+Ethereum's emergency hard fork proves knowledge of the hash preimage behind an
+address, which was never published. The asymmetry differs — a derivation path in
+one case, a preimage in the other — but the shape is identical, and in both
+cases the verifier is hash-based rather than a signature scheme.
+
+This is worth noting for two reasons. It is the strongest evidence in this
+report that hash-based proof systems, not post-quantum signatures alone, are the
+migration primitive that matters. And it is a caution against reading the
+"different problems" thesis too strongly: the constraints diverge, and some
+techniques still generalise across them.
+
+## 8. Synthesis
 
 Three observations survive cross-comparison.
 
@@ -240,7 +305,7 @@ Cosmos raises its limits and warns operators.
 
 # Part III — The evidence: the GOAT stack
 
-## 8. Summary of findings
+## 9. Summary of findings
 
 Four surfaces carry quantum-exposed cryptography, and they are not equally
 GOAT's to fix.
@@ -259,7 +324,7 @@ The headline is in row 3/3b. **BitVM2's Bitcoin-side plumbing is already
 post-quantum; its cryptographic content is not.** That reframes the work from a
 rewrite into two contained swaps.
 
-## 9. bitvm2-node: the plumbing is hash-based, the content is not
+## 10. bitvm2-node: the plumbing is hash-based, the content is not
 
 `bitvm2-node` is a Rust ZK bridge: crates for `bitcoin-light-client-circuit`,
 `header-chain`, `state-chain`, `commit-chain`, `bitvm2-ga`, with circuits for
@@ -378,7 +443,7 @@ than Groth16's constant-size proof, and BitVM2's economics depend on what fits
 in Bitcoin script and what a challenge transaction costs. That trade is the real
 engineering question, and it should be measured before it is decided.
 
-## 10. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
+## 11. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
 
 `bitvm2-node`'s `gc-v2` branch (head `73cdb49`, 2026-07-22) and the companion
 repository [`GOATNetwork/bitvm2-gc`](https://github.com/GOATNetwork/bitvm2-gc)
@@ -440,7 +505,7 @@ garbling work is valuable for other reasons; it should simply not be counted as
 progress toward quantum resistance. The one thing it does add to this analysis is
 the label-size decision above.
 
-## 11. The peg's weakest quantum link is the Taproot key path
+## 12. The peg's weakest quantum link is the Taproot key path
 
 `crates/bitvm2-ga/src/committee/api.rs` shows the peg custody model directly:
 
@@ -482,7 +547,7 @@ document achieves without waiting on Bitcoin.
 This should be evaluated before the proof-system work. It is cheaper, it is
 available immediately, and it closes the easier of the two attacks.
 
-## 12. goat: relayer and consensus
+## 13. goat: relayer and consensus
 
 Unchanged from the first pass, and still where the best return is.
 
@@ -515,7 +580,7 @@ that dominates Cosmos post-quantum migration — enabling a key type counterpart
 cannot verify stops packet flow and expires the client — appears not to apply.
 Worth confirming against deployment reality rather than `go.mod` alone.
 
-## 13. goat-geth: the divergence, measured
+## 14. goat-geth: the divergence, measured
 
 The fork question flagged in the earlier pass now has an answer. Comparing
 `GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
@@ -588,7 +653,7 @@ account-semantics question, and it should not inherit that low priority.
 
 # Part IV — What to do
 
-## 14. Ordering the work
+## 15. Ordering the work
 
 **The general principle.** Ownership and severity, not novelty, should set the
 order:
@@ -629,7 +694,7 @@ order:
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory which deployed contracts call `0x06`–`0x08` and `0x0a` | The lag is the delivery channel for upstream precompile work. The inventory matters because immutable contracts calling a broken pairing cannot be migrated later — only identified now |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
-## 15. The honest limit
+## 16. The honest limit
 
 Bitcoin has specified **no post-quantum signature scheme**. BIP-360 (Draft)
 removes Taproot's key-path spend and says in its own text that it "does not
@@ -647,7 +712,7 @@ gains PQ signatures.
 
 # Part V — Method, traps, and limits
 
-## 16. Recurring traps
+## 17. Recurring traps
 
 Collected from the analysis so far; each cost real effort to notice.
 
@@ -694,7 +759,7 @@ Collected from the analysis so far; each cost real effort to notice.
   enabling a new key type before counterparties can verify it breaks
   connectivity — and the failure is silent at upgrade time.
 
-## 17. What is general and what is not
+## 18. What is general and what is not
 
 Part I follows from the *structure* of a Bitcoin L2 — a chain that
 settles to a base layer it does not control, runs borrowed consensus, and
@@ -756,6 +821,24 @@ operates a zkVM (Ziren) and a garbling stack, so the ingredients are present.
 But it means the relayer vote path cannot be migrated by swapping a key type,
 and it should be planned as its own workstream rather than folded into the
 attestation-key change.
+
+### Consistency re-check of the base-layer sections, 2026-07-31
+
+The Bitcoin and Ethereum sections were written first and re-checked against
+primary sources after the rest of the report was complete. Two corrections
+followed, both understatements rather than errors of fact.
+
+| Checked | Result |
+| --- | --- |
+| Does a post-quantum signature BIP exist yet? | **No.** The BIPs index still lists exactly one post-quantum entry, BIP-361 itself. The core finding holds |
+| BIP-360 status and version | Unchanged: `Status: Draft`, v0.12.0, `Layer: Consensus (soft fork)` |
+| Is the 34% figure really BIP-361's? | Yes, line 46: "As of March 1, 2026, over 34% of all bitcoin have revealed a public key on-chain" |
+| BIP-361 phase timings | Phase A at 160,000 blocks (~3 years); Phase B 2 years after Phase A |
+| Is Phase B a freeze? | **No — correction.** It encumbers legacy spends with a rescue protocol based on BIP-32 hardened-derivation knowledge, verified by ZK-STARK or commit/reveal. Only abandoned keys and P2PK, which has no known knowledge asymmetry, become unspendable |
+| Is Ethereum's plan aggregation-only? | **No — correction.** The report omitted the account track: the emergency hard fork with STARK preimage recovery, EIP-7702 (Final, Pectra) and EIP-8141 (Draft, created 2026-01-29) |
+
+The second correction also surfaced something the report had missed entirely,
+now section 7: both chains independently chose the same rescue technique.
 
 ## Remaining open items
 
