@@ -126,6 +126,63 @@ which for an L2 is usually the product. The actionable item here is not
 cryptographic: **reduce the 377-commit gap so the fork can absorb upstream PQ
 work when it lands.**
 
+
+## 3a. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
+
+`bitvm2-node`'s `gc-v2` branch (head `73cdb49`, 2026-07-22) and the companion
+repository [`GOATNetwork/bitvm2-gc`](https://github.com/GOATNetwork/bitvm2-gc)
+move BitVM2 toward a garbled-circuit design: rather than compiling the verifier
+into raw Bitcoin script, the verifier circuit is *garbled*, and the dispute
+protocol evaluates the garbling. `bitvm2-gc`'s workspace is built around a crate
+named exactly for this — `garbled-snark-verifier` — alongside Bristol-format
+circuits.
+
+Because garbled circuits are built from symmetric primitives, it is tempting to
+read this as a post-quantum improvement. It is not, and the reason is the
+distinction this note keeps returning to: **garbling changes how the verifier is
+executed, not what it asserts.**
+
+`garbled-snark-verifier/Cargo.toml` depends on `ark-groth16`, `ark-bn254`,
+`ark-ec` and `ark-relations` *and* on `aes` and `blake3`. The arkworks
+dependencies are the circuit being garbled; the AES and BLAKE3 dependencies are
+the garbling machinery. The circuit tree confirms the shape — `circuits/groth16.rs`,
+`circuits/bn254/`, `circuits/dv_snark.rs`, `dv_bn254/` (designated-verifier
+variants), and `circuits/sect233k1/`.
+
+Three consequences.
+
+**The garbled statement is still elliptic-curve.** Whether the garbled circuit
+verifies Groth16 over BN254 or a designated-verifier SNARK, soundness rests on
+pairing or discrete-log assumptions that Shor breaks. `gc-v2` retains
+`ark-groth16` and `ark-bn254` (22 files reference `groth16`), so the conclusion
+of section 2 is unchanged by the garbling work.
+
+**`sect233k1` is a curve too, and a smaller one.** The `sect233k1` circuit family
+is a binary-field Koblitz curve, presumably chosen because binary-field
+arithmetic is XOR-heavy and therefore cheap under free-XOR garbling — a sensible
+engineering choice. It is still an elliptic curve, so Shor applies, and at a
+233-bit binary field it sits around 112-bit classical security, below
+secp256k1. Garbling efficiency and quantum resistance are pulling in different
+directions here, and it is worth being explicit that the choice optimised the
+first.
+
+**Garbling adds a security parameter that did not previously exist.**
+`LABEL_SIZE = 16` and the PRF is `Aes128` (`garbled-snark-verifier/src/core/utils.rs`,
+`verifiable-circuit-babe/src/gc/utils.rs`). 128-bit labels under AES-128 put the
+garbling layer at NIST post-quantum security category 1 — the floor of the
+approved range, since Grover search over a 128-bit space is the reference for
+that category. That is a defensible choice and not a vulnerability, but it is a
+*decision*, and for a bridge holding long-lived commitments it deserves to be
+made explicitly rather than inherited from a default. Moving labels and PRF to
+256-bit restores category-5 margin at roughly double the garbling cost.
+
+**Net effect on the post-quantum position: none.** `gc-v2` still uses MuSig2
+(8 files) and Taproot (9 files), so section 4a's key-path exposure is unchanged,
+and it still wraps in Groth16, so section 2's conclusion is unchanged. The
+garbling work is valuable for other reasons; it should simply not be counted as
+progress toward quantum resistance. The one thing it does add to this analysis is
+the label-size decision above.
+
 ## 4. goat: relayer and consensus
 
 Unchanged from the first pass, and still where the best return is.
@@ -240,4 +297,8 @@ Stated so this is not read as more thorough than it is.
   it is load-bearing for aggregation it is another Shor-exposed surface.
 - The 37 custom `goat-geth` commits were not read individually, so whether any
   touch cryptography is unknown.
+- In `bitvm2-gc`, the `verifiable-circuit*` crates and the Bristol circuits were
+  not read; only the workspace manifests, the garbling core and the circuit tree
+  were. Whether the designated-verifier variants change the trust model is not
+  assessed here.
 - The IBC conclusion rests on `go.mod` alone.

@@ -106,6 +106,14 @@ Collected from the analysis so far; each cost real effort to notice.
   dependency returned zero hits while the files plainly exist in the tree.
   An audit built on code search over a fork-heavy stack will silently miss
   things. Enumerate the git tree instead.
+- **Symmetric-primitive layers are not automatically "post-quantum done".**
+  Garbled circuits, hash commitments and MPC layers are built from symmetric
+  primitives and survive Shor, but they only protect what they *carry*. If the
+  statement being garbled or committed is an elliptic-curve or pairing
+  assertion, the composition is only as quantum-safe as that assertion. Check
+  the content, not the wrapper — and separately check the symmetric layer's own
+  parameter, since 128-bit labels sit at the floor of the approved
+  post-quantum range.
 - **Interoperability makes migration a coordination problem.** Where light
   clients verify a counterparty's signatures with their own compiled-in crypto,
   enabling a new key type before counterparties can verify it breaks
