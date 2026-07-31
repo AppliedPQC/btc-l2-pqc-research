@@ -15,9 +15,9 @@ GOAT's to fix.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
 | 2 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
-| 3 | Bridge proof system | `bitvm2-node` | **Groth16 over BN254** | broken by Shor | **GOAT** |
+| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK, **wrapped in Groth16/BN254** | wrapper broken by Shor | **GOAT** |
 | 3b | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
-| 4 | Peg-out signatures | `bitvm2-node` | MuSig2 / secp256k1 | broken by Shor | **GOAT** |
+| 4 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
 | 5 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
 | 6 | Bitcoin L1 outputs | — | secp256k1 / Schnorr | broken by Shor | **Bitcoin, not GOAT** |
 
@@ -65,12 +65,35 @@ from `crates/bitvm2-ga/src/types.rs` and `crates/bitvm2-ga/src/operator/api.rs`.
 > shows the files. Any audit relying on code search over this stack will
 > silently under-report.
 
-**Consequence.** GOAT's BitVM2 migration is a *proof-system swap*, not a rewrite
-of the Bitcoin-side machinery. Replacing Groth16/BN254 with a hash-based proof
-system — a STARK, or the kind of hash-based zkVM Ethereum is building as
-`leanVM` — leaves the Winternitz commitment layer intact, because that layer was
-never the quantum-vulnerable part. The Bitcoin script verifier changes; the
-mechanism for getting bits into it does not.
+**Groth16 is a wrapper, not the proving system.** `bitvm2-node` depends on
+Ziren (`zkm-prover`, `zkm-verifier`, `zkm-sdk`, `zkm-zkvm`, and four more
+crates), and Ziren is a FRI/STARK zkVM — its whitepaper mentions FRI 31 times
+and STARK 19, over Poseidon and a small prime field. Occurrence counts in
+`bitvm2-node` are consistent with the standard pattern: `zkm` 93, `wrap` 87,
+`stark` 22, `groth16` 24. The types confirm what the Groth16 proof is *for*:
+
+```rust
+pub type Groth16Proof = ark_groth16::Proof<ark_bn254::Bn254>;
+pub type OperatorWotsSignatures = (GuestPubinSignatures, Groth16ProofSignatures);
+```
+
+The Groth16 proof elements are committed into Bitcoin script through Winternitz
+signatures. So the pipeline is: **Ziren produces a hash-based STARK proof, that
+proof is wrapped into a constant-size Groth16 proof over BN254, and the Groth16
+verifier is what BitVM2 runs in Bitcoin script.**
+
+**Consequence, and it is a good one.** The quantum-vulnerable component is the
+*final wrapper*, not the proving stack. Ziren's STARK core is already
+post-quantum, and the Winternitz commitment layer is already post-quantum. The
+wrapper exists solely to compress the proof enough to be affordable on Bitcoin.
+
+The migration is therefore narrower than "replace the proof system": it is
+*remove the Groth16 wrap and verify the STARK directly in Bitcoin script*. The
+cost is script weight — a FRI proof is far larger than Groth16's constant few
+hundred bytes. BitVM2's architecture is unusually well suited to absorbing that,
+because the verifier only executes during a dispute, never on the happy path.
+Whether the resulting challenge transaction is economically viable is the real
+question, and it is measurable today with the existing stack.
 
 The cost is size and script weight. Hash-based proofs are substantially larger
 than Groth16's constant-size proof, and BitVM2's economics depend on what fits
@@ -136,15 +159,59 @@ that dominates Cosmos post-quantum migration — enabling a key type counterpart
 cannot verify stops packet flow and expires the client — appears not to apply.
 Worth confirming against deployment reality rather than `go.mod` alone.
 
+
+## 4a. The peg's weakest quantum link is the Taproot key path
+
+`crates/bitvm2-ga/src/committee/api.rs` shows the peg custody model directly:
+
+```rust
+pub type CommitteeSignatures = CommitteeMusig2Data<TaprootSignature>;
+...
+let n_of_n_taproot_public_key = ...;
+let connector_0 = Connector0::new(network, &n_of_n_taproot_public_key);
+```
+
+The committee aggregates MuSig2 partial signatures into a Taproot signature over
+an **n-of-n aggregated Taproot public key**, used by the BitVM2 connector
+outputs. MuSig2 producing a `TaprootSignature` over an aggregate key is the
+canonical **key-path** spend pattern; a script-path spend would not need
+aggregation. Script paths are present too — `TaprootBuilder::new().add_leaf(...)`
+with an internal key appears in the light-client crate — so the design uses
+both.
+
+**Why this is the sharpest exposure in the stack.** A Taproot output commits its
+output key in the `scriptPubKey` at the moment the output is *created*, not when
+it is spent. So the peg's aggregated public key is on chain, in the clear, for
+the entire lifetime of the UTXO. An adversary with a cryptographically relevant
+quantum computer recovers the corresponding secret from that public key and
+spends via the key path — **without forging a proof, without compromising any
+committee member, and without waiting for a spend to reveal anything.** It is
+strictly easier than attacking the Groth16 wrapper, and it is the textbook
+long-exposure case that BIP-360 exists to remove.
+
+**There is a mitigation available today, with no post-quantum scheme required.**
+Taproot outputs may commit a provably unspendable NUMS point as the internal
+key, which disables the key path and leaves only script paths. That is precisely
+the construction BIP-360 proposes to standardise as P2MR, and it can be adopted
+unilaterally now. The cost is real and must be weighed: losing the key path
+means losing the cheap, private cooperative spend, so every peg movement becomes
+a script-path spend with its larger witness. But it converts the peg from
+long-exposure vulnerable to long-exposure safe, which no other change in this
+document achieves without waiting on Bitcoin.
+
+This should be evaluated before the proof-system work. It is cheaper, it is
+available immediately, and it closes the easier of the two attacks.
+
 ## 5. Recommended sequencing
 
 | Phase | Action | Why here |
 | --- | --- | --- |
 | 0 | Inventory every signature and proof verification path; add tests asserting no fixed signature-length assumptions | The `VerifySign` 64-byte gate shows these assumptions are load-bearing and invisible |
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
-| 2 | BitVM2: prototype a hash-based proof system to replace Groth16/BN254, and measure script weight and challenge cost | The Winternitz layer already survives; this is the one change that fixes bridge *soundness* rather than key theft |
-| 3 | Rebase `goat-cosmos-sdk` onto SDK ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | Mechanism is upstream and gentle, but gated on the rebase |
-| 4 | Reduce `goat-geth`'s 377-commit lag; track Ethereum account abstraction | Following costs less than diverging; the lag is the real blocker |
+| 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
+| 3 | BitVM2: drop the Groth16 wrap and verify the Ziren STARK directly in script; measure script weight and challenge cost | Ziren's core and the Winternitz layer are already PQ-safe; only the wrapper is not. Fixes *soundness*, not just theft |
+| 4 | Rebase `goat-cosmos-sdk` onto SDK ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | Mechanism is upstream and gentle, but gated on the rebase |
+| 5 | Reduce `goat-geth`'s 377-commit lag; track Ethereum account abstraction | Following costs less than diverging; the lag is the real blocker |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
 ## 6. The honest limit
@@ -168,7 +235,7 @@ Stated so this is not read as more thorough than it is.
 - `x/locking`, `x/bitcoin` and `x/consensusfork` were not audited for further
   signature surfaces.
 - The `goat-cosmos-sdk` fork was not inspected; its divergence determines the
-  phase-3 rebase cost and is the largest remaining unknown.
+  phase-4 rebase cost and is the largest remaining unknown.
 - The BLS12-381 usage in `goat` (2 files, via `gnark-crypto`) was not traced. If
   it is load-bearing for aggregation it is another Shor-exposed surface.
 - The 37 custom `goat-geth` commits were not read individually, so whether any
