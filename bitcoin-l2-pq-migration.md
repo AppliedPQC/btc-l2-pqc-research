@@ -222,7 +222,20 @@ half that concerns user funds. Accounts have their own two-track story:
   **Draft**, created 2026-01-29), which supports a slot for an arbitrary
   post-quantum signature scheme alongside the classical ones.
 
-Nothing post-quantum has shipped to Ethereum mainnet on either front.
+At the **execution layer** the mechanism is deliberately scheme-agnostic.
+Rather than adding an ML-DSA or Falcon precompile — which would repeat the
+`bn256Pairing` mistake of welding a precompile to one construction —
+[EIP-7885](https://eips.ethereum.org/EIPS/eip-7885) ("Precompile for NTT
+operations", Draft, created 2025-02-12) exposes the *shared primitive*. Its
+motivation states the reasoning directly: "Choosing to integrate NTT and InvNTT
+instead of a specific algorithm provides agility, as DILITHIUM or FALCON or any
+equivalent can be implemented with a modest cost from those operators", and the
+same operator "is also of interest to speed-up STARK verifiers", so one
+precompile serves both scaling and the quantum transition. That is crypto-agility
+designed in at the layer where Ethereum previously failed to have it.
+
+Nothing post-quantum has shipped to Ethereum mainnet on any of these fronts;
+EIP-7885, EIP-8141 and EIP-8151 are all Draft.
 
 ## 6. Cosmos: a negotiation problem, and the one that shipped
 
@@ -617,14 +630,36 @@ set:
 
 Three curve families and two pairing engines, all consensus-critical.
 
-**This is a harder migration than account signatures, not an easier one.**
-Account keys can migrate through account abstraction, because the *user* opts
-in. A precompile cannot: it is a consensus rule, and the contracts that call it
-are immutable. Every on-chain SNARK verifier deployed on the chain calls
-`0x08`; that bytecode cannot be upgraded, and in general nobody has the
-authority to upgrade it. Removing or changing the precompile breaks those
-contracts permanently. There is no opt-in path for an already-deployed Groth16
-verifier.
+**This is a harder migration than account signatures, though not a hopeless
+one.** Account keys can migrate through account abstraction, because the *user*
+opts in. A precompile cannot be migrated that way: it is a consensus rule, and
+the contracts calling it are immutable bytecode that in general nobody has the
+authority to upgrade.
+
+Ethereum's own work shows the one lever that does exist, and it is narrower than
+"remove the precompile". **EIP-8151** ("Account Code Restricted ecRecover",
+Draft, created 2026-02-09) does not delete `ecRecover`; it *narrows* it, keyed on
+state the protocol already controls. The attack it closes is instructive: an EOA
+that migrates to post-quantum authorization via EIP-7702 has its ECDSA
+*transaction* authority disabled by EIP-3607 (Final), but `ecRecover` ignores
+account state — so a quantum attacker holding the derived ECDSA key could still
+authorize transfers through **immutable contracts**, notably ERC-20 `permit`
+implementations. EIP-8151 makes `ecRecover` return zero when the account has
+non-empty code that is not a valid delegation indicator.
+
+The generalisable rule is therefore sharper than "precompiles are unmigratable":
+
+- a precompile **bound to an account identity** can be narrowed conditionally,
+  because there is per-account state (has this account migrated?) to key the
+  restriction on;
+- a **stateless mathematical** precompile cannot. `bn256Pairing` answers a
+  question about field elements; there is no account whose migration status
+  could gate it, and every deployed verifier that calls it would break equally.
+
+`ecRecover` is in the first category. The pairing, BLS12-381 and KZG precompiles
+are in the second, and a search of the EIPs repository returns no proposal to
+deprecate or replace any of them. For those, inventory remains the only
+available action.
 
 **And the severity is soundness, not theft.** If BN254 discrete log falls, a
 forged proof satisfies `bn256Pairing`, and every on-chain verifier accepts it. For
@@ -732,12 +767,19 @@ Collected from the analysis so far; each cost real effort to notice.
   dependency returned zero hits while the files plainly exist in the tree.
   An audit built on code search over a fork-heavy stack will silently miss
   things. Enumerate the git tree instead.
-- **Precompiles are the exposure that cannot be migrated.** An account can
+- **Prefer exposing a primitive to blessing a scheme.** A precompile welded to
+  one construction (a specific curve, a specific pairing) becomes unremovable
+  the moment contracts depend on it. Exposing the shared underlying operation
+  instead — NTT rather than ML-DSA, as Ethereum's EIP-7885 proposes — keeps the
+  scheme choice in contract code, where it can still be changed.
+- **Precompiles are the exposure that is hardest to migrate.** An account can
   adopt a new signature scheme; a deployed contract calling a pairing
   precompile cannot. On any EVM chain the elliptic-curve and pairing
-  precompiles are consensus rules with immutable callers, so the exposure is
-  fixed at deployment time and only an inventory — not a migration — is
-  available afterwards.
+  precompiles are consensus rules with immutable callers. One lever exists:
+  a precompile bound to an *account identity* can be narrowed conditionally on
+  per-account state, as EIP-8151 does for `ecRecover`. A stateless mathematical
+  precompile such as a pairing check has no such state to key on, and for those
+  the exposure is fixed at deployment time with only an inventory available.
 - **A "hash-based" proof system can still depend on DLOG.** Check every
   sub-argument, not the headline commitment scheme: permutation arguments,
   lookup arguments and offline memory checks are all places where an
@@ -893,6 +935,8 @@ separately from the attestation-key work.
 
 | Checked | Result |
 | --- | --- |
+| How does Ethereum plan to make the *execution layer* post-quantum? | Three Draft Core EIPs: **7885** (NTT precompile, scheme-agnostic), **8141** (Frame Transaction, PQ signature slot), **8151** (Account Code Restricted `ecRecover`). EIP-7702 is Final and is the bridge |
+| Is a precompile really unmigratable? | **Refined.** EIP-8151 narrows `ecRecover` conditionally on account code rather than removing it. That lever exists for identity-bound precompiles; it does not exist for stateless ones like `bn256Pairing`, and no EIP proposes replacing those |
 | Is BLS aggregation actually *used*, or just available? | **Used.** `x/relayer/keeper/proposal.go:66` calls `AggregateVerify`, resolving to `FastAggregateVerify` over a bitmap-selected voter set against `relayer.Threshold()`. Upgraded from inference to a call site |
 | Could `leanVM` aggregate BLS instead? | **No.** Zero `bls`/`pairing`/`bls12` files in its tree; it is KoalaBear, Poseidon, WHIR and XMSS with a `rec_aggregation` crate. And proving a BLS verification inside a hash-based zkVM proves a true statement about a broken primitive |
 
