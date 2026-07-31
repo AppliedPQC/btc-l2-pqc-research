@@ -77,11 +77,30 @@ ownership question explicit before the scheme-selection question.
 
 Two rows carry most of the signal.
 
-**Row 3 is where severity is highest.** A broken *signature* scheme lets an
-attacker steal specific funds. A broken *proof system* lets an attacker forge
-the bridge's notion of truth — minting without deposit, or withdrawing without
-right. Pairing-based systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor exactly
-as ECDSA does. **"STARK" is not by itself an answer, though.** A zkVM's headline
+**Row 3 fails differently, not more severely.** An earlier draft called this the
+highest-severity row. That was sloppy, and it contradicted this report's own
+case study. Rows 1, 2 and 3 all terminate in the same place — loss of pegged
+funds — so ranking them by severity is not informative. Three axes are:
+
+| | Is the failure silent? | Attacker effort | Tractability of the fix |
+| --- | --- | --- | --- |
+| Row 1, L1 outputs | no, theft is visible | key recovery | not fixable by the L2 |
+| Row 2, operator keys | no | compromise a threshold | key-type swap, unless aggregated |
+| Row 3, proof system | **yes** | forge a proof | **varies enormously by sub-layer** |
+
+Row 3's distinction is that failure is **silent**: the verifier behaves exactly
+as specified while accepting falsehoods. Nothing looks wrong. That is a reason
+to treat it seriously, but it is not a reason to put it first — by attacker
+effort, an exposed Taproot key path is strictly easier than forging a proof, and
+its fix is cheaper, which is why the ordering in Part IV puts it ahead.
+
+**Tractability within row 3 varies more than between rows.** Pairing-based
+systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor exactly as ECDSA
+does. But a proof system is not one thing, and its sub-layers have very
+different fix costs — from a drop-in primitive swap to a full rebuild. The
+worked example in Part III has all three kinds at once.
+
+**And "STARK" is not by itself an answer.** A zkVM's headline
 commitment scheme can be hash-based while an auxiliary argument inside it is
 not: in the stack examined here, the FRI commitment is hash-based but the
 offline memory-consistency check commits memory values as elliptic-curve points
@@ -314,10 +333,21 @@ problem in its own words:
 
 So the offline memory-consistency argument — not the polynomial commitment —
 rests on discrete log. A quantum adversary does not need to attack FRI; it
-forges the memory check and with it the execution proof. The candidate
-replacement is a lattice-based homomorphic multiset hash such as LtHash, which
-would remove the DLOG assumption. **This is upstream work in Ziren, not
-something GOAT can fix in `bitvm2-node`, and it gates everything built on top.**
+forges the memory check and with it the execution proof. The replacement is a lattice-based multiset hash (LtHash), and it is **further
+along than a proposal**: Ziren carries a working prototype branch,
+[`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) — six
+commits over 39 files, last touched 2026-02-18, whose commits read *"replace
+ecmh by lthash multiset hash"* and which reaches into the core machine and the
+recursion circuits. The approach follows Zisk's
+[lattice-based multiset hashing](https://zisk.technology/secure-challenge-derivation-in-zisk/).
+
+This matters for how the layer should be ranked. Of the three quantum-exposed
+layers in this proof pipeline, **this is the tractable one**: it is a primitive
+swap inside an existing argument, not an architectural change, and someone has
+already built it. It remains upstream work rather than something GOAT can fix in
+`bitvm2-node`, and it still gates everything above it — a post-quantum wrapper
+over a DLOG-dependent execution proof buys nothing — but it should be read as a
+dependency to track and support, not as an open research problem.
 
 **And the garbling stack is built around Groth16 specifically.** `bitvm2-gc` is
 not a general circuit garbler that happens to be pointed at Groth16; its
@@ -333,7 +363,7 @@ layers, not one:
 | Layer | Primitive | Quantum status | Where the fix lives |
 | --- | --- | --- | --- |
 | Ziren FRI / Poseidon commitment | hash-based | safe | — |
-| Ziren multiset memory check | **hash-to-curve, DLOG** | **broken** | upstream, Ziren #276 |
+| Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | upstream, Ziren #276 — **prototype exists** (`feat/lthash`) |
 | Groth16 wrap | **BN254 pairing** | **broken** | GOAT |
 | `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
 | WOTS commitment into script | hash-based | safe | — |
@@ -593,7 +623,7 @@ order:
 | 0 | Inventory every signature and proof verification path; add tests asserting no fixed signature-length assumptions | The `VerifySign` 64-byte gate shows these assumptions are load-bearing and invisible |
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
-| 3 | Track and support Ziren #276: replace the hash-to-curve multiset hash with a lattice-based homomorphic hash (LtHash) | Gates everything above it — a PQ wrapper over a DLOG-dependent execution proof buys nothing. Upstream, so influence rather than implement |
+| 3 | Track and support Ziren #276 / `feat/lthash` through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement |
 | 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. Cheaper than previously assessed |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory which deployed contracts call `0x06`–`0x08` and `0x0a` | The lag is the delivery channel for upstream precompile work. The inventory matters because immutable contracts calling a broken pairing cannot be migrated later — only identified now |
@@ -739,8 +769,8 @@ Honestly short, and none of them block the recommendations:
   not enumerated. That inventory needs chain state, not source, and it is the
   one item on this list with a deadline: immutable callers can be identified now
   but never migrated later.
-- Ziren issue #276 has no assigned replacement primitive yet; LtHash is the
-  candidate named in discussion, not a decision.
+- Ziren's `feat/lthash` prototype has not been reviewed here for completeness or
+  merged upstream; whether it covers every ECMH use site is unchecked.
 - No second L2 has been examined, so Part I's taxonomy is structural reasoning
   supported by one case, not a survey.
 

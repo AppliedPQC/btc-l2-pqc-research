@@ -36,8 +36,9 @@ Six findings would have been wrong without that discipline:
   and BIP-361 requires a PQ signature BIP that does not exist.
 - BitVM's Winternitz signatures are invisible to GitHub code search, which does
   not index forks. The files are plainly in the tree.
-- Ziren's STARK is **not** post-quantum: its multiset memory check is
-  hash-to-curve and rests on DLOG (Ziren #276).
+- Ziren's STARK is **not** post-quantum today: its multiset memory check is
+  hash-to-curve and rests on DLOG (Ziren #276) — with a working LtHash
+  prototype that makes it the tractable layer of the three.
 - GOAT runs **no** `cosmos-sdk` fork — the `replace` is commented out — so the
   consensus upgrade is far cheaper than first assessed.
 - The relayer's BLS12-381 **vote key** is a third key type, and the hardest
