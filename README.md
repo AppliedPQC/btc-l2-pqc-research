@@ -18,13 +18,14 @@ the L2 owns, and bound the residual risk on what it does not*.
 
 | Note | Subject |
 | --- | --- |
-| [bitcoin-l2-pq-framework.md](bitcoin-l2-pq-framework.md) | The general problem: surface taxonomy, ownership, ordering, recurring traps |
+| [bitcoin-l2-pq-migration.md](bitcoin-l2-pq-migration.md) | The main note. Part I: the general problem — surface taxonomy and ownership. Part II: the evidence — the GOAT stack (`goat`, `goat-geth`, `bitvm2-node`, `bitvm2-gc`). Part III: ordering, traps, and limits |
 | [blockchain-pqc-migration.md](blockchain-pqc-migration.md) | The base layers an L2 inherits from: Bitcoin, Ethereum, Cosmos |
-| [case-study-goat.md](case-study-goat.md) | Case study 1 — the GOAT stack: `goat`, `goat-geth`, `bitvm2-node` |
 
-GOAT is the first worked case study, not the subject. The framework note is
-explicit about which findings follow from the *structure* of a Bitcoin L2 and
-which are so far grounded in one implementation.
+The general part and the case study are kept in one document on purpose. The
+general claims were derived from reading one stack, and splitting them across
+two files would imply they were grounded independently. Section 12 marks which
+findings follow from the *structure* of a Bitcoin L2 and which still rest on a
+single implementation.
 
 ## Why primary sources
 
