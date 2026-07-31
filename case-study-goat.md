@@ -152,12 +152,55 @@ behind is the number that matters for planning: any post-quantum work on the
 execution layer inherits an upstream catch-up first, and that catch-up will only
 grow.
 
-Recommendation for this surface remains *follow, do not lead*. Ethereum's
-account-abstraction route to post-quantum accounts has not shipped; diverging
-account semantics ahead of it would break wallet and tooling compatibility,
-which for an L2 is usually the product. The actionable item here is not
-cryptographic: **reduce the 377-commit gap so the fork can absorb upstream PQ
-work when it lands.**
+### The EVM's cryptographic substrate is the real exposure here
+
+Treating this surface as "accounts use ECDSA, follow Ethereum" understates it
+badly. The EVM exposes elliptic-curve and pairing operations as *consensus-level
+precompiles*, and `core/vm/contracts.go` in `goat-geth` carries the full upstream
+set:
+
+| Address / type | Primitive | Quantum status |
+| --- | --- | --- |
+| `0x01` `ecrecover` | secp256k1 ECDSA | **broken** |
+| `0x06`–`0x08` `bn256Add`, `bn256ScalarMul`, `bn256Pairing` | BN254 group ops and **pairing** | **broken** |
+| `0x0a` `kzgPointEvaluation` | KZG over BLS12-381 | **broken** |
+| `bls12381G1Add/G2Add/MultiExp/Pairing/MapG1/MapG2` | BLS12-381 (EIP-2537) | **broken** |
+| `p256Verify` | secp256r1 ECDSA (RIP-7212) | **broken** |
+| `0x02`, `0x03`, `0x04`, `0x05`, `0x09` | SHA-256, RIPEMD-160, identity, modexp, BLAKE2F | safe |
+
+Three curve families and two pairing engines, all consensus-critical.
+
+**This is a harder migration than account signatures, not an easier one.**
+Account keys can migrate through account abstraction, because the *user* opts
+in. A precompile cannot: it is a consensus rule, and the contracts that call it
+are immutable. Every on-chain SNARK verifier deployed on the chain calls
+`0x08`; that bytecode cannot be upgraded, and in general nobody has the
+authority to upgrade it. Removing or changing the precompile breaks those
+contracts permanently. There is no opt-in path for an already-deployed Groth16
+verifier.
+
+**And the severity is soundness, not theft.** If BN254 discrete log falls, a
+forged proof satisfies `bn256Pairing`, and every on-chain verifier accepts it. For
+a bridge that verifies withdrawal proofs on the L2 side, that is direct loss of
+funds through an interface that is behaving exactly as specified.
+
+**The same assumption is load-bearing twice.** BN254 appears on the Bitcoin side
+through the BitVM2 Groth16 wrapper *and* on the EVM side through `bn256Pairing`.
+One broken assumption compromises the bridge from both directions, so the two
+should be tracked as a single dependency rather than two independent risks.
+
+**GOAT's own changes do not touch this.** Of the 37 commits, the changed files
+concentrate in `core/types` (23 files), `eth/tracers`, `eth/catalyst` and
+`core/goat`; the only configuration-adjacent file is `params/config.go`. The
+precompile set is inherited from upstream unchanged, which means the fix must
+also come from upstream — and that is the concrete argument for closing the
+377-commit gap. It is not hygiene; it is the delivery channel for any future
+post-quantum precompile work.
+
+Recommendation for *account semantics* remains follow-not-lead: diverging ahead
+of Ethereum's account-abstraction route breaks wallet and tooling compatibility,
+which for an L2 is usually the product. But the precompile exposure is not an
+account-semantics question, and it should not inherit that low priority.
 
 
 ## 3a. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
@@ -309,7 +352,7 @@ available immediately, and it closes the easier of the two attacks.
 | 3 | Track and support Ziren #276: replace the hash-to-curve multiset hash with a lattice-based homomorphic hash (LtHash) | Gates everything above it — a PQ wrapper over a DLOG-dependent execution proof buys nothing. Upstream, so influence rather than implement |
 | 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap |
 | 5 | Rebase `goat-cosmos-sdk` onto SDK ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | Mechanism is upstream and gentle, but gated on the rebase |
-| 6 | Reduce `goat-geth`'s 377-commit lag; track Ethereum account abstraction | Following costs less than diverging; the lag is the real blocker |
+| 6 | Reduce `goat-geth`'s 377-commit lag; inventory which deployed contracts call `0x06`–`0x08` and `0x0a` | The lag is the delivery channel for upstream precompile work. The inventory matters because immutable contracts calling a broken pairing cannot be migrated later — only identified now |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
 ## 6. The honest limit

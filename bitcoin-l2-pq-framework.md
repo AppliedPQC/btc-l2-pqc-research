@@ -45,6 +45,7 @@ ownership question explicit before the scheme-selection question.
 | 4 | Bridge data commitments | Merkle / Winternitz / Lamport | **no — hash-based** | already safe |
 | 5 | L2 consensus keys | ed25519, BLS12-381 | yes | **the L2**, via its consensus stack |
 | 6 | L2 execution accounts | secp256k1 ECDSA | yes | the L2, at tooling cost |
+| 7 | **EVM crypto precompiles** | ecrecover, BN254 pairing, BLS12-381, KZG | yes | **upstream, and unfixable for deployed callers** |
 
 Two rows carry most of the signal.
 
@@ -86,6 +87,11 @@ Ownership and severity, not novelty, should set the order:
 4. **Execution accounts** (row 6). Follow the upstream ecosystem. Diverging
    account semantics ahead of it breaks wallet and tooling compatibility, which
    for an L2 is often the product itself.
+4b. **EVM precompiles** (row 7). Cannot be sequenced like the others, because
+   the fix is upstream and the callers are immutable. What *can* be done now is
+   an inventory: which deployed contracts call the pairing and KZG precompiles,
+   and which of them are consensus- or bridge-critical. A contract that cannot
+   be upgraded can at least be known about before it matters.
 5. **L1 settlement** (row 1). Not fixable. Bound it instead: avoid address
    reuse, prefer outputs that do not commit a bare public key, avoid long-lived
    outputs with revealed keys, and write custody policy so the script and key
@@ -111,6 +117,12 @@ Collected from the analysis so far; each cost real effort to notice.
   dependency returned zero hits while the files plainly exist in the tree.
   An audit built on code search over a fork-heavy stack will silently miss
   things. Enumerate the git tree instead.
+- **Precompiles are the exposure that cannot be migrated.** An account can
+  adopt a new signature scheme; a deployed contract calling a pairing
+  precompile cannot. On any EVM chain the elliptic-curve and pairing
+  precompiles are consensus rules with immutable callers, so the exposure is
+  fixed at deployment time and only an inventory — not a migration — is
+  available afterwards.
 - **A "hash-based" proof system can still depend on DLOG.** Check every
   sub-argument, not the headline commitment scheme: permutation arguments,
   lookup arguments and offline memory checks are all places where an
