@@ -658,8 +658,57 @@ The generalisable rule is therefore sharper than "precompiles are unmigratable":
 
 `ecRecover` is in the first category. The pairing, BLS12-381 and KZG precompiles
 are in the second, and a search of the EIPs repository returns no proposal to
-deprecate or replace any of them. For those, inventory remains the only
-available action.
+deprecate or replace any of them.
+
+### The caller set, not the precompile, is the unit of analysis
+
+Ethereum's own coverage is uneven in a way that turns out to be informative.
+`ecRecover` has a plan. KZG has a stated plan: the roadmap acknowledges that
+"KZG commitments rely on elliptic curve pairings, the same mathematical
+structure that quantum computers can attack", and commits to "replace KZG with a
+quantum-safe commitment scheme", with STARK-based and lattice-based commitments
+named as candidates still under research. The BN254 and BLS12-381 group and
+pairing precompiles are not addressed at all — the official quantum-resistance
+page does not discuss precompiles as a category.
+
+That asymmetry is not an oversight, and the reason generalises. What decides
+whether an exposure can be migrated is not the precompile but **who calls it**:
+
+| Precompile | Caller set | Migratable? |
+| --- | --- | --- |
+| `ecRecover` | every account, but gated by per-account state | yes — narrow it (EIP-8151) |
+| KZG point evaluation | rollup contracts: bounded, known, actively maintained | plausibly — coordinate the set |
+| BN254 / BLS12-381 pairing | every SNARK verifier ever deployed: unbounded, largely abandoned | no — nobody to coordinate with |
+
+A bounded set of maintained callers can be coordinated through an upgrade. An
+unbounded set of abandoned contracts cannot, by anyone, at any price. This is why
+the plans exist where they exist.
+
+### What that means in practice
+
+For stateless precompiles with unbounded callers, the levers are all
+unattractive and worth naming honestly:
+
+- **Additive only** — ship post-quantum precompiles alongside the old ones, as
+  EIP-7885 proposes. This is the actual plan. It solves the *forward* problem
+  and leaves the legacy one untouched.
+- **Gas repricing** as soft deprecation — make the call prohibitively expensive
+  rather than removing it. This breaks callers economically instead of
+  technically, which fails *silently* through out-of-gas rather than loudly, and
+  is arguably worse than a clean break.
+- **Flag-day removal** — the shape of Bitcoin's BIP-361 sunset applied to a
+  precompile. There is no Ethereum precedent for this, and it breaks every
+  caller at once.
+- **Nothing** — the default. When BN254 falls, every deployed verifier accepts
+  forged proofs while behaving exactly as specified.
+
+**The actionable question for any given chain is therefore not "is the
+precompile exposed" but "are my callers upgradeable".** A project whose
+verifier contracts are its own and upgradeable sits in the tractable category
+regardless of what upstream does; one whose verifiers are immutable has a
+deadline it cannot move. That is a question about deployment artifacts, and it
+can be answered today from chain state — which is why the inventory in the
+ordering below is dated work rather than a formality.
 
 **And the severity is soundness, not theft.** If BN254 discrete log falls, a
 forged proof satisfies `bn256Pairing`, and every on-chain verifier accepts it. For
@@ -726,7 +775,7 @@ order:
 | 3 | Track and support Ziren #276 / `feat/lthash` through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement |
 | 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. Cheaper than previously assessed |
-| 6 | Reduce `goat-geth`'s 377-commit lag; inventory which deployed contracts call `0x06`–`0x08` and `0x0a` | The lag is the delivery channel for upstream precompile work. The inventory matters because immutable contracts calling a broken pairing cannot be migrated later — only identified now |
+| 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
 ## 16. The honest limit
@@ -937,6 +986,8 @@ separately from the attestation-key work.
 | --- | --- |
 | How does Ethereum plan to make the *execution layer* post-quantum? | Three Draft Core EIPs: **7885** (NTT precompile, scheme-agnostic), **8141** (Frame Transaction, PQ signature slot), **8151** (Account Code Restricted `ecRecover`). EIP-7702 is Final and is the bridge |
 | Is a precompile really unmigratable? | **Refined.** EIP-8151 narrows `ecRecover` conditionally on account code rather than removing it. That lever exists for identity-bound precompiles; it does not exist for stateless ones like `bn256Pairing`, and no EIP proposes replacing those |
+| Does Ethereum have a stated plan for the pairing precompiles? | **No.** The official quantum-resistance page does not treat precompiles as a category. KZG is covered, with a commitment to replace it by a STARK- or lattice-based scheme; BN254 and BLS12-381 are not mentioned |
+| Does KZG's honest trusted setup help against quantum? | **Only against a different threat.** The roadmap notes the setup stays secure if one participant discarded their secret, which addresses setup compromise. KZG's *binding* rests on pairings, so a quantum adversary forges openings regardless of how honest the ceremony was. The two should not be conflated |
 | Is BLS aggregation actually *used*, or just available? | **Used.** `x/relayer/keeper/proposal.go:66` calls `AggregateVerify`, resolving to `FastAggregateVerify` over a bitmap-selected voter set against `relayer.Threshold()`. Upgraded from inference to a call site |
 | Could `leanVM` aggregate BLS instead? | **No.** Zero `bls`/`pairing`/`bls12` files in its tree; it is KoalaBear, Poseidon, WHIR and XMSS with a `rec_aggregation` crate. And proving a BLS verification inside a hash-based zkVM proves a true statement about a broken primitive |
 
@@ -967,9 +1018,10 @@ Honestly short, and none of them block the recommendations:
   `core/types` changes against consensus-critical serialisation would close it
   fully.
 - Which deployed L2 contracts call the `0x06`–`0x08` and `0x0a` precompiles is
-  not enumerated. That inventory needs chain state, not source, and it is the
-  one item on this list with a deadline: immutable callers can be identified now
-  but never migrated later.
+  not enumerated, and neither is the more important question of whether each
+  caller is upgradeable. That needs chain state rather than source, and it is
+  the one item on this list with a deadline: an immutable caller can be
+  identified now but never migrated later.
 - Ziren's `feat/lthash` prototype has not been reviewed here for completeness or
   merged upstream; whether it covers every ECMH use site is unchecked.
 - No second L2 has been examined, so Part I's taxonomy is structural reasoning
