@@ -334,36 +334,11 @@ migration primitive that matters. And it is a caution against reading the
 "different problems" thesis too strongly: the constraints diverge, and some
 techniques still generalise across them.
 
-## 8. Synthesis
-
-Three observations survive cross-comparison.
-
-**Progress inverts exposure.** Bitcoin has the sharpest exposure — an immutable
-ledger, over a third of supply with revealed keys, no administrator — and has
-specified no post-quantum signature scheme. Cosmos, with far less public
-attention on its quantum posture, has ML-DSA-65 in shipped code. The ordering is
-explained by governance surface, not by risk: Cosmos can ship an opt-in key type
-because each chain decides for itself, whereas Bitcoin must reach rough
-consensus across an ecosystem that treats a forced migration as confiscation.
-
-**Each chain's hardest constraint is different, and each roadmap fits its own
-constraint.** Bitcoin's is governance, which is why BIP-361 is framed in terms
-of incentives rather than mechanism. Ethereum's is signature size at validator
-scale, which is why its flagship artifact is a zkVM rather than a signature
-library. Cosmos's is heterogeneity across connected chains, which is why its
-mechanism is a negotiable key type rather than a flag day.
-
-**Size is the shared physical fact.** ML-DSA-65 at 1952/3309 bytes and
-hash-based signatures at roughly 3 KB are the same order of magnitude, and both
-are one to two orders larger than what they replace. Every roadmap here is
-downstream of that number: Bitcoin defers it, Ethereum aggregates it away,
-Cosmos raises its limits and warns operators.
-
 ---
 
 # Part III — The evidence: the GOAT stack
 
-## 9. Summary of findings
+## 8. Summary of findings
 
 Six of the seven surfaces below carry quantum-exposed cryptography, and they are
 not equally GOAT's to fix. Row numbers refer to the taxonomy of section 2, so
@@ -380,14 +355,14 @@ that the case study and the framework can be read against each other.
 | 6 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
 
 Peg custody spans two rows: the output is an L1 settlement output, but its
-*construction* is GOAT's choice, which is what makes the mitigation in section 12
+*construction* is GOAT's choice, which is what makes the mitigation in section 11
 available without waiting on Bitcoin.
 
 The headline is in rows 3 and 4. **BitVM2's Bitcoin-side plumbing is already
 post-quantum; its cryptographic content is not.** That reframes the work from a
 rewrite into two contained swaps.
 
-## 10. bitvm2-node: the plumbing is hash-based, the content is not
+## 9. bitvm2-node: the plumbing is hash-based, the content is not
 
 `bitvm2-node` is a Rust ZK bridge: crates for `bitcoin-light-client-circuit`,
 `header-chain`, `state-chain`, `commit-chain`, `bitvm2-ga`, with circuits for
@@ -507,7 +482,7 @@ than Groth16's constant-size proof, and BitVM2's economics depend on what fits
 in Bitcoin script and what a challenge transaction costs. That trade is the real
 engineering question, and it should be measured before it is decided.
 
-## 11. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
+## 10. The `gc-v2` branch and BitVM3 garbling: orthogonal to post-quantum
 
 `bitvm2-node`'s `gc-v2` branch (head `73cdb49`, 2026-07-22) and the companion
 repository [`GOATNetwork/bitvm2-gc`](https://github.com/GOATNetwork/bitvm2-gc)
@@ -560,7 +535,7 @@ garbling work is valuable for other reasons; it should simply not be counted as
 progress toward quantum resistance. The one thing it does add to this report is
 the label-size decision above.
 
-## 12. The peg's weakest quantum link is the Taproot key path
+## 11. The peg's weakest quantum link is the Taproot key path
 
 `crates/bitvm2-ga/src/committee/api.rs` shows the peg custody model directly:
 
@@ -602,7 +577,7 @@ document achieves without waiting on Bitcoin.
 This should be evaluated before the proof-system work. It is cheaper, it is
 available immediately, and it closes the easier of the two attacks.
 
-## 13. goat: relayer and consensus
+## 12. goat: relayer and consensus
 
 This is where the best return is.
 
@@ -671,9 +646,9 @@ that dominates Cosmos post-quantum migration — enabling a key type counterpart
 cannot verify stops packet flow and expires the client — appears not to apply.
 Worth confirming against deployment reality rather than `go.mod` alone.
 
-## 14. The relayer's BLS vote key
+## 13. The relayer's BLS vote key
 
-Section 13's recommendation addresses the attestation key. That is not the whole
+Section 12's recommendation addresses the attestation key. That is not the whole
 picture, because the relayer carries **three** distinct key types, not one:
 
 | Key | Scheme | Purpose |
@@ -805,7 +780,7 @@ design signal: if aggregability is a first-order requirement, it is an argument
 about *which* post-quantum scheme to adopt, not a problem to be solved after
 adopting ML-DSA.
 
-## 15. goat-geth: the divergence, measured
+## 14. goat-geth: the divergence, measured
 
 Comparing `GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
 
@@ -948,7 +923,7 @@ account-semantics question, and it should not inherit that low priority.
 
 # Part IV — What to do
 
-## 16. Ordering the work
+## 15. Ordering the work
 
 **The general principle.** Ownership and severity, not novelty, should set the
 order:
@@ -990,7 +965,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
-## 17. The honest limit
+## 16. The honest limit
 
 Bitcoin has specified **no post-quantum signature scheme**. BIP-360 (Draft)
 removes Taproot's key-path spend and says in its own text that it "does not
@@ -1008,7 +983,7 @@ gains PQ signatures.
 
 # Part V — Method, traps, and limits
 
-## 18. Recurring traps
+## 17. Recurring traps
 
 Collected from the analysis so far; each cost real effort to notice.
 
@@ -1069,7 +1044,7 @@ Collected from the analysis so far; each cost real effort to notice.
   enabling a new key type before counterparties can verify it breaks
   connectivity — and the failure is silent at upgrade time.
 
-## 19. What is general and what is not
+## 18. What is general and what is not
 
 Part I follows from the *structure* of a Bitcoin L2 — a chain that
 settles to a base layer it does not control, runs borrowed consensus, and
@@ -1077,15 +1052,15 @@ operates its own bridge. That structure is shared across the category, so the
 surface taxonomy and the ownership argument should transfer.
 
 The ordering and the traps are grounded in **one** stack examined in depth plus
-the base-layer survey. The ordering reflects a judgement about value
-and severity that I believe generalises, but it has not been tested against a
-second L2. The traps are observations, not a survey.
+the base-layer survey. The ordering reflects a judgement about value and
+severity that should generalise, but it has not been tested against a second L2.
+The traps are observations, not a survey.
 
 **The open work is a second and third case study** — a rollup with a different
 bridge design, and an L2 with a non-Cosmos consensus stack — to find out which
 of these findings are properties of the category and which are properties of one
-implementation. Until then, treat sections 3 and 4 as a well-grounded hypothesis
-rather than an established result.
+implementation. Until then, treat the ordering of section 15 and the traps of section 17 as
+well-grounded hypotheses rather than established results.
 
 ## Remaining open items
 
