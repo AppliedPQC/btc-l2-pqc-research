@@ -444,12 +444,10 @@ signatures. So the pipeline is: **Ziren produces a hash-based STARK proof, that
 proof is wrapped into a constant-size Groth16 proof over BN254, and the Groth16
 verifier is what BitVM2 runs in Bitcoin script.**
 
-**But the STARK core is not post-quantum either.** The inference that FRI and
-Poseidon are hash-based, so the core must be safe, does not survive contact with
-the code. The counter-example is upstream and documented. Ziren issue
+**But the STARK core is not post-quantum either.** FRI and Poseidon are
+hash-based, so the core looks safe; the code says otherwise. Ziren issue
 [#276](https://github.com/ProjectZKM/Ziren/issues/276), *"Replace hash-to-curve
-in multiset hash by quantum safe primitives"*, open since 2025-08-14, states the
-problem in its own words:
+in multiset hash by quantum safe primitives"*, open since 2025-08-14:
 
 > In our multiset hash, we rely on hash-to-curve to calculate the hash of values
 > of the memory addresses, and consider each hash as the x of a point, then
@@ -459,14 +457,15 @@ problem in its own words:
 > memory checking. […] To achieve quantum safe, we need to remove the DLOG
 > hardness assumption.
 
-So the offline memory-consistency argument — not the polynomial commitment —
-rests on discrete log. A quantum adversary does not need to attack FRI; it
-forges the memory check and with it the execution proof. The replacement is a lattice-based multiset hash (LtHash), and it is **further
-along than a proposal**: Ziren carries a working prototype branch,
-[`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) — six
-commits over 39 files, last touched 2026-02-18, whose commits read *"replace
-ecmh by lthash multiset hash"* and which reaches into the core machine and the
-recursion circuits. The approach follows Zisk's
+So it is the offline memory-consistency argument, not the polynomial commitment,
+that rests on discrete log: a quantum adversary forges the memory check rather
+than attacking FRI, and the execution proof falls with it.
+
+The fix is a lattice-based multiset hash (LtHash), and it is **past proposal**.
+Ziren's [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash)
+branch — six commits over 39 files, last touched 2026-02-18, commits reading
+*"replace ecmh by lthash multiset hash"* — reaches into the core machine and the
+recursion circuits, following Zisk's
 [lattice-based multiset hashing](https://zisk.technology/secure-challenge-derivation-in-zisk/).
 
 This matters for how the layer should be ranked. Of the three quantum-exposed
