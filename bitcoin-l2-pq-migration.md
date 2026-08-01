@@ -376,7 +376,7 @@ that the case study and the framework can be read against each other.
 | 2 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
 | 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT and ZKM** |
 | 4 | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
-| 5 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
+| 5 | Consensus keys | `goat` (CometBFT) | **secp256k1** | broken by Shor | **GOAT** |
 | 6 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
 
 Peg custody spans two rows: the output is an L1 settlement output, but its
@@ -528,23 +528,14 @@ is executed, not what it asserts.**
 dependencies are the circuit being garbled; the AES and BLAKE3 dependencies are
 the garbling machinery. The circuit tree confirms the shape — `circuits/groth16.rs`,
 `circuits/bn254/`, `circuits/dv_snark.rs`, `dv_bn254/` (designated-verifier
-variants), and `circuits/sect233k1/`.
+variants).
 
-Three consequences.
+Two consequences.
 
 **The garbled statement is still elliptic-curve.** Whether the garbled circuit
 verifies Groth16 over BN254 or a designated-verifier SNARK, soundness rests on
 pairing or discrete-log assumptions that Shor breaks. `gc-v2` retains
 `ark-groth16` and `ark-bn254` (22 files reference `groth16`), so the proof-pipeline conclusion is unchanged by the garbling work.
-
-**`sect233k1` is a curve too, and a smaller one.** The `sect233k1` circuit family
-is a binary-field Koblitz curve, presumably chosen because binary-field
-arithmetic is XOR-heavy and therefore cheap under free-XOR garbling — a sensible
-engineering choice. It is still an elliptic curve, so Shor applies, and at a
-233-bit binary field it sits around 112-bit classical security, below
-secp256k1. Garbling efficiency and quantum resistance are pulling in different
-directions here, and it is worth being explicit that the choice optimised the
-first.
 
 **Garbling adds a security parameter that did not previously exist.**
 `LABEL_SIZE = 16` and the PRF is `Aes128` (`garbled-snark-verifier/src/core/utils.rs`,
@@ -639,6 +630,24 @@ consensus key type, opt-in behind
 shipping in the same release. GOAT runs SDK **v0.53.8** via a fork
 (`goat-cosmos-sdk`), so this is a fork rebase across two minors, not a version
 bump — the rebase is the critical path.
+
+GOAT's validators sign with **secp256k1**, not the Cosmos default of ed25519.
+`cmd/goatd/cmd/modgen/init.go` sets
+`consensusParam.Validator.PubKeyTypes = []string{cmttypes.ABCIPubKeyTypeSecp256k1}`,
+and the mainnet genesis agrees: `"pub_key_types": ["secp256k1"]`. This changes
+nothing about the exposure, since both fall to Shor, but it does mean the
+migration lever is already in use — the chain sets `pub_key_types` explicitly
+rather than inheriting a default, so adopting ML-DSA-65 is an edit to a value the
+genesis already carries.
+
+Two version facts bound that work. `go.mod` pins CometBFT **v0.38.25**, which
+predates both the ML-DSA-65 key type and the expanded signature budget described
+in section 6; that release does not even contain `crypto/bls12381`. And the same
+`init.go` sets `Block.MaxBytes = 50 * 1024 * 124`, which is 6,348,800 bytes,
+about 6 MiB — the arithmetic reads like an intended 50 MiB with a transposed
+digit. Whatever the intent, a chain moving to 3309-byte consensus signatures
+should confirm this number deliberately: at 6 MiB the commit is a materially
+larger fraction of the block than the CometBFT defaults assume.
 
 `ibc-go` does not appear in `goat`'s `go.mod`, so the IBC light-client hazard
 that dominates Cosmos post-quantum migration — enabling a key type counterparties
