@@ -88,26 +88,24 @@ funds — so ranking them by severity is not informative. Three axes are:
 | Row 2, operator keys | no | compromise a threshold | key-type swap, unless aggregated |
 | Row 3, proof system | **yes** | forge a proof | **varies enormously by sub-layer** |
 
-Row 3's distinction is that failure is **silent**: the verifier behaves exactly
-as specified while accepting falsehoods. Nothing looks wrong. That is a reason
-to treat it seriously, but it is not a reason to put it first — by attacker
-effort, an exposed Taproot key path is strictly easier than forging a proof, and
-its fix is cheaper, which is why the ordering in Part IV puts it ahead.
+Row 3's failure is **silent**: the verifier behaves exactly as specified while
+accepting falsehoods. That earns it attention, not first place. An exposed
+Taproot key path is easier to attack and cheaper to fix, which is why Part IV
+orders it ahead.
 
 **Tractability within row 3 varies more than between rows.** Pairing-based
 systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor exactly as ECDSA
-does. But a proof system is not one thing, and its sub-layers have very
-different fix costs — from a drop-in primitive swap to a full rebuild. The
-worked example in Part III has all three kinds at once.
+does. But a proof system is not one thing: its sub-layers range from a drop-in
+primitive swap to a full rebuild, and the worked example in Part III has all
+three kinds at once.
 
-**And "STARK" is not by itself an answer.** A zkVM's headline
-commitment scheme can be hash-based while an auxiliary argument inside it is
-not: in the stack examined here, the FRI commitment is hash-based but the
-offline memory-consistency check commits memory values as elliptic-curve points
-and its soundness rests explicitly on DLOG hardness. A quantum adversary attacks
-the memory argument, not FRI. **The question to ask is never "is it a STARK"
-but "which assumptions does every argument in this proof rely on" — and the
-answer is often only visible in the project's own issue tracker.**
+**And "STARK" is not by itself an answer.** A zkVM's headline commitment can be
+hash-based while an auxiliary argument inside it is not. In the stack examined
+here, FRI is hash-based, but the offline memory-consistency check commits memory
+values as elliptic-curve points and rests explicitly on DLOG hardness — so a
+quantum adversary attacks the memory argument, not FRI. **Ask not "is it a
+STARK" but "what does every argument in this proof assume" — and expect the
+answer to live in the project's issue tracker.**
 
 **Row 4 is the good news, and it is frequently missed.** Bridge constructions
 that commit data via Merkle trees, or that carry values through Bitcoin script
