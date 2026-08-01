@@ -77,10 +77,9 @@ ownership question explicit before the scheme-selection question.
 
 Two rows carry most of the signal.
 
-**Row 3 fails differently, not more severely.** An earlier draft called this the
-highest-severity row. That was sloppy, and it contradicted this report's own
-case study. Rows 1, 2 and 3 all terminate in the same place — loss of pegged
-funds — so ranking them by severity is not informative. Three axes are:
+**Row 3 fails differently, not more severely.** Rows 1, 2 and 3 all terminate in
+the same place — loss of pegged funds — so ranking them by severity carries no
+information. Three axes separate them:
 
 | | Is the failure silent? | Attacker effort | Tractability of the fix |
 | --- | --- | --- | --- |
@@ -162,8 +161,7 @@ post-quantum entry, BIP-361 itself. The exposure is not hypothetical: BIP-361
 states that as of 1 March 2026 over 34% of all bitcoin have revealed a public
 key on chain.
 
-**The sunset is not a blanket freeze, and an earlier draft of this report
-implied it was.** BIP-361's Phase A (160,000 blocks, roughly three years after
+**The sunset is not a blanket freeze.** BIP-361's Phase A (160,000 blocks, roughly three years after
 activation) stops sends to quantum-vulnerable address types. Phase B, two years
 later, does not simply invalidate legacy signatures: it *encumbers* ECDSA and
 Schnorr spends with a **rescue protocol** designed "to rule out quantum
@@ -202,9 +200,8 @@ encodings, and grew out of the research implementation `b-wagn/hash-sig`
 (eprint 2025/055). `leanSig`'s README is explicit that the code is unaudited and
 not for production. `pq.ethereum.org` is the coordination hub.
 
-**That is only the consensus front.** An earlier draft of this report described
-Ethereum's plan as an aggregation problem and stopped there, which omitted the
-half that concerns user funds. Accounts have their own two-track story:
+**That is only the consensus front.** Accounts have their own two-track story,
+and it is the half that concerns user funds:
 
 - an **emergency track** — Buterin's proposal to hard-fork on evidence of
   large-scale theft, revert to the last pre-theft block, freeze legacy ECDSA
@@ -318,20 +315,25 @@ Cosmos raises its limits and warns operators.
 
 ## 9. Summary of findings
 
-Four surfaces carry quantum-exposed cryptography, and they are not equally
-GOAT's to fix.
+Six of the seven surfaces below carry quantum-exposed cryptography, and they are
+not equally GOAT's to fix. Row numbers refer to the taxonomy of section 2, so
+that the case study and the framework can be read against each other.
 
-| # | Surface | Repo | Scheme | Quantum status | Owner of the fix |
+| Row | Surface | Repo | Scheme | Quantum status | Owner of the fix |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
-| 2 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
+| 1 | Bitcoin L1 outputs | — | secp256k1 / Schnorr | broken by Shor | **Bitcoin, not GOAT** |
+| 1–2 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
+| 2 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
 | 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT + upstream Ziren** |
-| 3b | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
-| 4 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
-| 5 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
-| 6 | Bitcoin L1 outputs | — | secp256k1 / Schnorr | broken by Shor | **Bitcoin, not GOAT** |
+| 4 | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
+| 5 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
+| 6 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
 
-The headline is in row 3/3b. **BitVM2's Bitcoin-side plumbing is already
+Peg custody spans two rows: the output is an L1 settlement output, but its
+*construction* is GOAT's choice, which is what makes the mitigation in section 12
+available without waiting on Bitcoin.
+
+The headline is in rows 3 and 4. **BitVM2's Bitcoin-side plumbing is already
 post-quantum; its cryptographic content is not.** That reframes the work from a
 rewrite into two contained swaps.
 
@@ -392,9 +394,9 @@ signatures. So the pipeline is: **Ziren produces a hash-based STARK proof, that
 proof is wrapped into a constant-size Groth16 proof over BN254, and the Groth16
 verifier is what BitVM2 runs in Bitcoin script.**
 
-**But the STARK core is not post-quantum either.** An earlier draft of this note
-claimed it was, on the reasoning that FRI and Poseidon are hash-based. That is
-wrong, and the counter-example is upstream and documented. Ziren issue
+**But the STARK core is not post-quantum either.** The inference that FRI and
+Poseidon are hash-based, so the core must be safe, does not survive contact with
+the code. The counter-example is upstream and documented. Ziren issue
 [#276](https://github.com/ProjectZKM/Ziren/issues/276), *"Replace hash-to-curve
 in multiset hash by quantum safe primitives"*, open since 2025-08-14, states the
 problem in its own words:
@@ -431,7 +433,7 @@ headline crate is `garbled-snark-verifier` and its circuit tree is organised
 around `groth16.rs`, `bn254/`, `dv_snark.rs` and `dv_bn254/`. Swapping the proof
 system therefore does not mean deleting a wrapper — it means rebuilding the
 garbled-circuit stack around a different verifier, which is the single largest
-item in this document.
+item in this report.
 
 **Revised scope.** The proof path contains three independent Shor-vulnerable
 layers, not one:
@@ -466,8 +468,8 @@ circuits.
 
 Because garbled circuits are built from symmetric primitives, it is tempting to
 read this as a post-quantum improvement. It is not, and the reason is the
-distinction this note keeps returning to: **garbling changes how the verifier is
-executed, not what it asserts.**
+distinction this report keeps returning to: **garbling changes how the verifier
+is executed, not what it asserts.**
 
 `garbled-snark-verifier/Cargo.toml` depends on `ark-groth16`, `ark-bn254`,
 `ark-ec` and `ark-relations` *and* on `aes` and `blake3`. The arkworks
@@ -513,7 +515,7 @@ wrapper — is the real obstacle.
 (8 files) and Taproot (9 files), so the Taproot key-path exposure is unchanged,
 and it still wraps in Groth16, so the proof-pipeline conclusion is unchanged. The
 garbling work is valuable for other reasons; it should simply not be counted as
-progress toward quantum resistance. The one thing it does add to this analysis is
+progress toward quantum resistance. The one thing it does add to this report is
 the label-size decision above.
 
 ## 12. The peg's weakest quantum link is the Taproot key path
@@ -560,7 +562,7 @@ available immediately, and it closes the easier of the two attacks.
 
 ## 13. goat: relayer and consensus
 
-Unchanged from the first pass, and still where the best return is.
+This is where the best return is.
 
 **Relayer attestation keys** (`x/relayer/types/pubkey.go`) are the bridge trust
 root, held as a protobuf `oneof` over `Secp256K1 | Schnorr`. The `oneof` is an
@@ -593,8 +595,7 @@ Worth confirming against deployment reality rather than `go.mod` alone.
 
 ## 14. goat-geth: the divergence, measured
 
-The fork question flagged in the earlier pass now has an answer. Comparing
-`GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
+Comparing `GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
 
 ```
 status = diverged
@@ -753,15 +754,16 @@ order:
 4. **Execution accounts** (row 6). Follow the upstream ecosystem. Diverging
    account semantics ahead of it breaks wallet and tooling compatibility, which
    for an L2 is often the product itself.
-4b. **EVM precompiles** (row 7). Cannot be sequenced like the others, because
-   the fix is upstream and the callers are immutable. What *can* be done now is
-   an inventory: which deployed contracts call the pairing and KZG precompiles,
-   and which of them are consensus- or bridge-critical. A contract that cannot
-   be upgraded can at least be known about before it matters.
 5. **L1 settlement** (row 1). Not fixable. Bound it instead: avoid address
    reuse, prefer outputs that do not commit a bare public key, avoid long-lived
    outputs with revealed keys, and write custody policy so the script and key
    policy can migrate when the base layer can.
+
+**EVM precompiles (row 7) sit outside this sequence.** They cannot be ordered
+against the rest, because the fix is upstream and the callers are immutable.
+What can be done now is an inventory: which deployed contracts call the pairing
+and KZG precompiles, and which of those are consensus- or bridge-critical. A
+contract that cannot be upgraded can at least be known about before it matters.
 
 **Applied to GOAT.**
 
@@ -893,8 +895,8 @@ items changed a conclusion.
 
 ### The relayer's BLS vote key is the hardest single item
 
-This did not appear in earlier drafts and it changes the relayer recommendation.
-The relayer carries **three** distinct key types, not one:
+This changes the relayer recommendation. The relayer carries **three** distinct
+key types, not one:
 
 | Key | Scheme | Purpose |
 | --- | --- | --- |
@@ -902,18 +904,17 @@ The relayer carries **three** distinct key types, not one:
 | `TxKey` | secp256k1 | transaction authorisation |
 | `VoteKey` | **BLS12-381 G2, 96-byte compressed** | voting, verified via `AggregateVerify` |
 
-Earlier drafts recommended "add ML-DSA-65 to the `PublicKey` `oneof`". That
-remains correct and remains the cheapest first move — but it addresses only the
-attestation key. The vote key is a different problem, and a much harder one,
+Adding ML-DSA-65 to the `PublicKey` `oneof` remains correct and remains the
+cheapest first move, but it addresses only the attestation key. The vote key is a different problem, and a much harder one,
 because **its value is aggregation**. BLS lets N relayer votes verify as one
 48-byte signature. No standardised post-quantum signature aggregates: ML-DSA and
 SLH-DSA have no aggregation, so replacing BLS naively turns one signature into
 N, at 3309 bytes each. For twenty relayers that is roughly 66 KB where there was
 48 bytes.
 
-**Aggregation is confirmed in use, not merely available.** An earlier draft
-inferred this from the presence of an aggregate API, which is weaker evidence
-than it sounds. The call site is `x/relayer/keeper/proposal.go:66`:
+**Aggregation is confirmed in use, not merely available.** The presence of an
+aggregate API is weaker evidence than it appears; what settles it is the call
+site, `x/relayer/keeper/proposal.go:66`:
 
 ```go
 sigdoc := types.VoteSignDoc(req.MethodName(), sdkctx.ChainID(),
