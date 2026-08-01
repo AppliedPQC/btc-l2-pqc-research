@@ -52,3 +52,11 @@ Six findings would have been wrong without that discipline:
 
 A dated snapshot, not a maintained document. Standards, repositories and
 roadmaps here move quickly; check the date at the top of the report.
+
+## Layout
+
+```text
+bitcoin-l2-pq-migration.md   the report
+notes/                       the first-pass research it was consolidated from,
+                             kept for provenance and not maintained
+```
