@@ -75,6 +75,30 @@ ownership question explicit before the scheme-selection question.
 | 6 | L2 execution accounts | secp256k1 ECDSA | yes | the L2, at tooling cost |
 | 7 | **EVM crypto precompiles** | ecrecover, BN254 pairing, BLS12-381, KZG | yes | **upstream, and unfixable for deployed callers** |
 
+```mermaid
+flowchart TB
+    subgraph BASE["Bitcoin's to fix — the L2 cannot"]
+        R1["1 · L1 settlement outputs<br/>secp256k1 / Schnorr"]
+    end
+    subgraph OWN["The L2's to fix"]
+        R2["2 · Bridge attestation<br/>operator and relayer keys"]
+        R3["3 · Bridge proof system"]
+        R5["5 · Consensus keys"]
+        R6["6 · Execution accounts"]
+    end
+    subgraph UP["Upstream's to fix — callers are immutable"]
+        R7["7 · EVM crypto precompiles"]
+    end
+    R4["4 · Bridge data commitments<br/>Merkle / Winternitz — already safe"]
+    class R1,R2,R3,R5,R6,R7 broken
+    class R4 safe
+    classDef broken fill:#ffebe9,stroke:#cf222e,color:#1f2328
+    classDef safe fill:#dafbe1,stroke:#1a7f37,color:#1f2328
+```
+
+The grouping, not the list, is the point: three different parties hold the fix,
+and only the middle group is the L2's to schedule.
+
 Two rows carry most of the signal.
 
 **Row 3 fails differently, not more severely.** Rows 1, 2 and 3 all terminate in
@@ -446,8 +470,25 @@ layers, not one:
 | `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
 | WOTS commitment into script | hash-based | safe | — |
 
+```mermaid
+flowchart LR
+    subgraph ZIREN["Ziren zkVM — one STARK proof"]
+        direction TB
+        F["FRI + Poseidon<br/>polynomial commitment"]
+        M["offline memory check<br/>ECMH, rests on DLOG"]
+    end
+    ZIREN --> G["Groth16 wrap<br/>BN254 pairing"]
+    G --> GC["bitvm2-gc<br/>garbles the Groth16 verifier<br/>AES-128 labels"]
+    GC --> W["Winternitz commitment<br/>into Bitcoin script"]
+    class F,W safe
+    class M,G,GC broken
+    classDef broken fill:#ffebe9,stroke:#cf222e,color:#1f2328
+    classDef safe fill:#dafbe1,stroke:#1a7f37,color:#1f2328
+```
+
 The two hash-based layers at the ends are fine. Everything between them depends
-on either DLOG or pairings. Any credible post-quantum plan for this bridge has
+on either DLOG or pairings, and the first break sits *inside* the component
+usually described as the hash-based one. Any credible post-quantum plan for this bridge has
 to address all three, in dependency order: Ziren's memory check first, since a
 post-quantum wrapper over a DLOG-dependent execution proof buys nothing.
 
@@ -964,9 +1005,14 @@ chosen for one property, aggregation. Hash-based signatures are post-quantum but
 do not aggregate. Recursive proving restores that property. The path is
 therefore:
 
-```
-BLS                    hash-based signatures       + recursive aggregation
-(aggregates, broken) →  (safe, N x 3309 bytes)  →  (aggregation restored)
+```mermaid
+flowchart LR
+    A["BLS12-381<br/>aggregates, broken"] --> B["hash-based signatures<br/>safe, N × 3309 bytes"]
+    B --> C["recursive aggregation<br/>aggregation restored"]
+    class A broken
+    class B,C safe
+    classDef broken fill:#ffebe9,stroke:#cf222e,color:#1f2328
+    classDef safe fill:#dafbe1,stroke:#1a7f37,color:#1f2328
 ```
 
 not "keep BLS and add a zkVM". The ordering matters: the signature scheme is
