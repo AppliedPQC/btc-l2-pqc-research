@@ -1,20 +1,21 @@
 # Post-quantum migration for Bitcoin layer 2s
 
-**A research report.** Compiled 2026-07-31 from primary sources: BIP text from
+**A research report.** Compiled 2026-07-31, revised 2026-08-01, from primary
+sources: BIP text from
 `bitcoin/bips`, `UPGRADING.md` from `cosmos/cosmos-sdk`, the Ziren issue
 tracker, and the GOAT repositories and their dependency trees read through the
-GitHub API and local clones. Where a widely repeated secondary claim proved
-wrong, or where a maintainer correction changed a conclusion, that is recorded
-rather than quietly patched — see the verification log in Part V.
+GitHub API and local clones. Claims are stated as verified; checks
+still outstanding are listed under *Remaining open items*.
 
 ## Abstract
 
 A Bitcoin layer 2 has a post-quantum problem that neither Bitcoin nor Ethereum
 has alone. It settles to a base layer it cannot change, borrows consensus from a
 third ecosystem, and operates a bridge whose trust root is cryptography of its
-own choosing. The honest goal is therefore never "make the L2 post-quantum
-safe"; it is to harden the surfaces the L2 owns and bound the residual risk on
-the ones it does not.
+own choosing. The goal is to make both the L2 and the base layer post-quantum
+safe — but only one of those is the L2's to schedule, so the work divides into
+surfaces it can act on and surfaces where it can only bound exposure and press
+upstream.
 
 Part I sets out that structure and a seven-row surface taxonomy keyed on *who
 can actually fix each row*. Part II surveys the three base layers an L2
@@ -56,8 +57,10 @@ That composition produces a problem neither Bitcoin nor Ethereum has alone:
 - The L2 **owns a bridge**, whose trust root is cryptography of its own choosing
   — and which is the highest-value target in the system.
 
-So the honest goal is never "make the L2 post-quantum safe". It is *harden the
-surfaces the L2 owns, and bound the residual risk on the ones it does not*.
+So the goal is *make both the L2 and the base layer post-quantum safe* — while
+recognising that the L2 can schedule only half of it. The rest of this report
+separates the surfaces it owns from the ones where the honest move is to bound
+exposure and track someone else's roadmap.
 
 ## 2. The surface taxonomy
 
@@ -69,7 +72,7 @@ ownership question explicit before the scheme-selection question.
 | --- | --- | --- | --- | --- |
 | 1 | L1 settlement outputs | secp256k1 / Schnorr | yes | **base layer only** |
 | 2 | Bridge attestation / operator set | secp256k1, Schnorr, MuSig2, BLS | yes | **the L2** |
-| 3 | Bridge proof system | Groth16, PLONK (pairing-based) or STARK (hash-based) | **depends, and check inside** | **the L2**, often with upstream |
+| 3 | Bridge proof system | Groth16, PLONK (pairing-based) or STARK (hash-based) | wrap proof and offline memory check are EC-based | **ZKM**, with the L2 |
 | 4 | Bridge data commitments | Merkle / Winternitz / Lamport | **no — hash-based** | already safe |
 | 5 | L2 consensus keys | ed25519, BLS12-381 | yes | **the L2**, via its consensus stack |
 | 6 | L2 execution accounts | secp256k1 ECDSA | yes | the L2, at tooling cost |
@@ -267,6 +270,89 @@ type. Post-quantum migration in an interoperable ecosystem is therefore a
 *coordination* problem before it is a cryptographic one — and the failure mode
 is silent until connectivity breaks.
 
+**And the cost is linear, because CometBFT does not aggregate.** The word
+*per-validator* in that parameter name is the whole story. A commit carries one
+signature for each validator that voted:
+
+```go
+type Commit struct {
+    Signatures []CommitSig     // in validator-address order
+}
+type CommitSig struct {
+    BlockIDFlag, ValidatorAddress, Timestamp, Signature
+}
+func MaxCommitBytes(valCount int) int64
+```
+
+There is no aggregate to grow; there is an array whose length is the validator
+set. Signature bytes per commit therefore scale as N × 3309:
+
+| Validators | ed25519 | ML-DSA-65 |
+| --- | --- | --- |
+| 50 | 3.2 KB | 165 KB |
+| 100 | 6.4 KB | 331 KB |
+| 150 | 9.6 KB | 496 KB |
+
+CometBFT's response to that arithmetic is more deliberate than the upgrade note
+suggests, and it is visible in two constants. `MaxSignatureSize` is not a fixed
+number but a maximum taken over every supported key type:
+
+```go
+var MaxSignatureSize = cmtmath.MaxInt(
+    cmtmath.MaxInt(ed25519.SignatureSize, bls12381.SignatureLength),
+    mldsa65.SignatureSize,
+)
+```
+
+so admitting ML-DSA-65 to the key-type set raises it from 96 to 3309 bytes
+globally. `MaxCommitSigBytes` then adds the address, flag, timestamp and proto
+framing on top of that, and `DefaultBlockParams` budgets the worst-case commit
+*separately from application data*:
+
+```go
+// MaxBytes budgets 21MiB for data plus the worst-case commit for a
+// maximum-size validator set (MaxVotesCount validators at
+// MaxSignatureSize), so the default stays valid for any pub key type
+// and validator count.
+MaxBytes: 22020096 + MaxCommitBytes(MaxVotesCount), // ~53MiB
+```
+
+At `MaxVotesCount` of 10,000 that is 21 MiB of data plus roughly 32 MiB of
+commit headroom. The design choice is to make the commit budget explicit and
+size it for the worst case, rather than leave operators to discover the
+interaction — and the proto-framing comment in the same file reasons directly
+about "ML-DSA-65's 3309-byte sigs", so this was sized for post-quantum keys on
+purpose.
+
+It has a consequence worth stating, because it is easy to miss: the maximum is
+over key types the build *supports*, not the ones a chain *enables*. Every chain
+on a CometBFT carrying `mldsa65` inherits the larger default block size whether
+or not its validators ever use a post-quantum key. The cost of the option is
+paid by everyone; only the per-commit bytes are paid by adopters.
+
+`UPGRADING.md` does not mention aggregation anywhere, and the upstream work to
+add it has not landed: CometBFT issue
+[#3455](https://github.com/cometbft/cometbft/issues/3455) (BLS signature
+aggregation) has been open since 2024, issue
+[#1305](https://github.com/cometbft/cometbft/issues/1305) (halving commit size
+with partial ed25519 signatures) since 2023, and two pull requests adding
+aggregation to `crypto/bls12381`,
+[#3632](https://github.com/cometbft/cometbft/pull/3632) and
+[#4763](https://github.com/cometbft/cometbft/pull/4763), were both closed without
+merging. BLS12-381 exists in CometBFT as a *key type*, not as aggregated commits.
+Two abandoned attempts is evidence about difficulty, not only about priority.
+
+**The IBC hazard.** The most transferable finding in this survey is a warning in
+the Cosmos changelog that has no analogue in the Bitcoin or Ethereum material.
+IBC light clients on a counterparty chain verify your validator set's commit
+signatures using *the counterparty's own compiled-in crypto*. If validators
+holding sufficient voting power sign with a key type a counterparty cannot
+verify, headers fail verification there, packet flow stops, and the light client
+eventually expires. The counterparty needs the verification code, not the key
+type. Post-quantum migration in an interoperable ecosystem is therefore a
+*coordination* problem before it is a cryptographic one — and the failure mode
+is silent until connectivity breaks.
+
 ## 7. One technique both chains converged on
 
 The two base layers face different problems and have chosen different
@@ -327,7 +413,7 @@ that the case study and the framework can be read against each other.
 | 1 | Bitcoin L1 outputs | — | secp256k1 / Schnorr | broken by Shor | **Bitcoin, not GOAT** |
 | 1–2 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
 | 2 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
-| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT + upstream Ziren** |
+| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT and ZKM** |
 | 4 | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
 | 5 | Consensus keys | `goat` (CometBFT) | ed25519 | broken by Shor | **GOAT** |
 | 6 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
@@ -425,7 +511,7 @@ recursion circuits. The approach follows Zisk's
 This matters for how the layer should be ranked. Of the three quantum-exposed
 layers in this proof pipeline, **this is the tractable one**: it is a primitive
 swap inside an existing argument, not an architectural change, and someone has
-already built it. It remains upstream work rather than something GOAT can fix in
+already built it. It remains ZKM's work rather than something GOAT can fix in
 `bitvm2-node`, and it still gates everything above it — a post-quantum wrapper
 over a DLOG-dependent execution proof buys nothing — but it should be read as a
 dependency to track and support, not as an open research problem.
@@ -444,7 +530,7 @@ layers, not one:
 | Layer | Primitive | Quantum status | Where the fix lives |
 | --- | --- | --- | --- |
 | Ziren FRI / Poseidon commitment | hash-based | safe | — |
-| Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | upstream, Ziren #276 — **prototype exists** (`feat/lthash`) |
+| Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | ZKM, Ziren #276 — **prototype exists** (`feat/lthash`) |
 | Groth16 wrap | **BN254 pairing** | **broken** | GOAT |
 | `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
 | WOTS commitment into script | hash-based | safe | — |
@@ -598,7 +684,159 @@ that dominates Cosmos post-quantum migration — enabling a key type counterpart
 cannot verify stops packet flow and expires the client — appears not to apply.
 Worth confirming against deployment reality rather than `go.mod` alone.
 
-## 14. goat-geth: the divergence, measured
+Consensus keys lose nothing structurally in that move, because CometBFT never
+aggregated them: a commit is an array of one signature per validator (section 6),
+so adopting ML-DSA-65 costs bytes in proportion to the validator set and nothing
+else. The work is a dependency upgrade and a block-parameter re-tune.
+
+**The relayer vote key is the opposite case, and the distinction is easy to
+miss.** Its aggregation is not inherited from Cosmos — it is GOAT's own code,
+`pkg/crypto/blst.go` called from `x/relayer/keeper/proposal.go:66`. Upstream has
+no aggregation to extend, and the attempts to add it have not landed, so no
+amount of tracking Cosmos releases produces an answer for this surface. It is
+GOAT's alone, and it is the one place in this stack where the post-quantum move
+costs a *property* rather than bytes.
+
+`ibc-go` does not appear in `goat`'s `go.mod`, so the IBC light-client hazard
+that dominates Cosmos post-quantum migration — enabling a key type counterparties
+cannot verify stops packet flow and expires the client — appears not to apply.
+Worth confirming against deployment reality rather than `go.mod` alone.
+
+## 14. The relayer's BLS vote key
+
+Section 13's recommendation addresses the attestation key. That is not the whole
+picture, because the relayer carries **three** distinct key types, not one:
+
+| Key | Scheme | Purpose |
+| --- | --- | --- |
+| `PublicKey` (`oneof`) | secp256k1 **or** Schnorr | attestation / proposals |
+| `TxKey` | secp256k1 | transaction authorisation |
+| `VoteKey` | **BLS12-381 G2, 96-byte compressed** | voting, verified via `AggregateVerify` |
+
+Adding ML-DSA-65 to the `PublicKey` `oneof` remains correct and remains the
+cheapest first move, but it addresses only the attestation key. The vote key is a different problem, and a much harder one,
+because **its value is aggregation**. BLS lets N relayer votes verify as one
+48-byte signature. No standardised post-quantum signature aggregates: ML-DSA and
+SLH-DSA have no aggregation, so replacing BLS naively turns one signature into
+N, at 3309 bytes each. For twenty relayers that is roughly 66 KB where there was
+48 bytes.
+
+**Aggregation is confirmed in use, not merely available.** The presence of an
+aggregate API is weaker evidence than it appears; what settles it is the call
+site, `x/relayer/keeper/proposal.go:66`:
+
+```go
+sigdoc := types.VoteSignDoc(req.MethodName(), sdkctx.ChainID(),
+                           relayer.Proposer, sequence, relayer.Epoch, req.VoteSigDoc())
+if !goatcrypto.AggregateVerify(pubkeys, sigdoc, req.GetVote().GetSignature()) {
+    return 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "verify aggregation signature failed")
+}
+```
+
+which resolves to `signature.FastAggregateVerify(true, pubkeys, msg, blsMode)` in
+`pkg/crypto/blst.go`. `FastAggregateVerify` is specifically the
+many-signers-one-message case, and the surrounding code confirms the shape: a
+participation bitmap selects voters, the proposer's `VoteKey` and each selected
+voter's are collected, participation is checked against `relayer.Threshold()`,
+and **one** aggregate signature is verified against **N** public keys over a
+single `sigdoc`. Relayer consensus is therefore a threshold vote carried by one
+48-byte signature regardless of signer count — and the bitmap design exists
+precisely so that signer count can grow.
+
+### `leanVM` is not a way to keep BLS
+
+The obvious hope is to wrap the existing BLS verification in a post-quantum
+zkVM: prove inside `leanVM` that the aggregate verified, and inherit the zkVM's
+hash-based soundness. That does not work, in two distinct senses, and the second
+is a restatement of this report's central trap.
+
+**Mechanically, there is nothing to build on.** `leanEthereum/leanVM` contains no
+BLS or pairing code at all — searching its tree for `bls`, `pairing` and `bls12`
+returns zero files. What it is built from is KoalaBear (505 references),
+Poseidon (75) and WHIR (48), with XMSS across 26 files and a dedicated
+`crates/rec_aggregation`. It is purpose-built to recursively aggregate
+*hash-based* signatures. A BLS verifier could be written as a guest program, but
+emulating BLS12-381 pairing arithmetic over a 31-bit field is precisely the work
+that EVM chains give a native precompile to avoid.
+
+**And even if it were built, it would buy nothing.** Proving "this BLS aggregate
+verified" inside a hash-based zkVM yields a post-quantum-sound *proof* of a
+quantum-broken *statement*. An adversary who can forge BLS signatures forges one
+and then honestly proves that it verified; the zkVM faithfully attests to a true
+claim about a dead assumption. This is the same error as Winternitz commitments
+carrying a Groth16 proof and garbled circuits garbling a Groth16 verifier — the
+third instance in this one stack, and the first that would be a *prospective*
+mistake rather than an existing one.
+
+**What `leanVM` actually offers is the removal of the need for BLS.** BLS was
+chosen for one property, aggregation. Hash-based signatures are post-quantum but
+do not aggregate. Recursive proving restores that property. The path is
+therefore:
+
+```
+BLS                    hash-based signatures       + recursive aggregation
+(aggregates, broken) →  (safe, N x 3309 bytes)  →  (aggregation restored)
+```
+
+not "keep BLS and add a zkVM". The ordering matters: the signature scheme is
+replaced first, and recursion recovers what the replacement costs.
+
+Concretely for GOAT, `AggregateVerify` at `proposal.go:66` is not wrapped, it is
+replaced, with the threshold-and-bitmap voting logic rebuilt around a hash-based
+scheme plus recursion. GOAT already operates a zkVM (Ziren) and a garbling
+stack, so the ingredients are unusually close to hand — but this is an
+architectural workstream, not a key-type change, and it should be planned
+separately from the attestation-key work.
+
+### Threshold signing is the other route, and it preserves the on-chain shape
+
+Recursion is not the only way to recover what BLS provided. The requirement at
+`proposal.go:66` is narrower than *aggregation* in the general sense: it is many
+signers, **one** message, verified against a threshold. That is the shape a
+**threshold signature** has natively — N parties jointly emit a single ordinary
+signature — and unlike aggregation it leaves the verifier untouched.
+
+Two 2026 results make this concrete for ML-DSA specifically, and they differ in
+the dimension that matters here:
+
+| | Parties | Communication | Verifier |
+| --- | --- | --- | --- |
+| [Quorus](https://eprint.iacr.org/2025/1163) (Bienstock et al., USENIX 2026) | **any number**, t-of-n | ~100 KB per party per rejection-sampling round | unmodified ML-DSA; signature and key sizes match |
+| [Efficient Threshold ML-DSA](https://eprint.iacr.org/2026/013) (Celi et al.) | up to **6** | ≤ 1 MB per party | unmodified ML-DSA |
+
+For a relayer set in the tens, only the first scales; the second is explicitly a
+small-party construction. What either buys is that the chain keeps verifying one
+3309-byte signature with a stock FIPS 204 verifier no matter how many relayers
+voted — the constant-size property that made BLS attractive.
+
+**The price is a change in signing shape, not in key type.** Today each relayer
+signs independently and offline, and the bitmap merely records who did. Threshold
+signing replaces that with a live multi-round protocol among the selected quorum,
+which converts a liveness-tolerant design into one with a signing-time
+availability requirement. That is a heavier change than it appears in a table.
+
+**And none of it is standardised.** NIST's first call for multi-party threshold
+schemes, [IR 8214C](https://csrc.nist.gov/projects/threshold-cryptography),
+reached final only on 2026-01-20, with preview submissions due 2026-08-07. For a
+peg trust root, depending on a construction with no FIPS number and no
+validation programme is a governance decision as much as a technical one, and it
+argues for sequencing the attestation key — which needs no aggregation at all —
+ahead of the vote key.
+
+**A note on the third possibility.** Post-hoc *signature* aggregation, which
+would squash N existing ML-DSA signatures into one small object without changing
+how anyone signs, is the option that sounds best and works worst.
+[Boudgoust and Takahashi](https://eprint.iacr.org/2023/159) (ESORICS 2023) gave
+the first Fiat–Shamir-with-aborts aggregate signature, applicable to Dilithium,
+and report "quite small compression rates" in their own words; it also aggregates
+*distinct* messages, where this use case has one. The strong result in this line,
+[aggregating with LaBRADOR](https://eprint.iacr.org/2024/311) (Aardal et al.,
+CRYPTO 2024), is for **Falcon**, not ML-DSA. That asymmetry is worth reading as a
+design signal: if aggregability is a first-order requirement, it is an argument
+about *which* post-quantum scheme to adopt, not a problem to be solved after
+adopting ML-DSA.
+
+## 15. goat-geth: the divergence, measured
 
 Comparing `GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
 
@@ -741,7 +979,7 @@ account-semantics question, and it should not inherit that low priority.
 
 # Part IV — What to do
 
-## 15. Ordering the work
+## 16. Ordering the work
 
 **The general principle.** Ownership and severity, not novelty, should set the
 order:
@@ -783,7 +1021,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
-## 16. The honest limit
+## 17. The honest limit
 
 Bitcoin has specified **no post-quantum signature scheme**. BIP-360 (Draft)
 removes Taproot's key-path spend and says in its own text that it "does not
@@ -801,7 +1039,7 @@ gains PQ signatures.
 
 # Part V — Method, traps, and limits
 
-## 17. Recurring traps
+## 18. Recurring traps
 
 Collected from the analysis so far; each cost real effort to notice.
 
@@ -862,7 +1100,7 @@ Collected from the analysis so far; each cost real effort to notice.
   enabling a new key type before counterparties can verify it breaks
   connectivity — and the failure is silent at upgrade time.
 
-## 18. What is general and what is not
+## 19. What is general and what is not
 
 Part I follows from the *structure* of a Bitcoin L2 — a chain that
 settles to a base layer it does not control, runs borrowed consensus, and
@@ -879,139 +1117,6 @@ bridge design, and an L2 with a non-Cosmos consensus stack — to find out which
 of these findings are properties of the category and which are properties of one
 implementation. Until then, treat sections 3 and 4 as a well-grounded hypothesis
 rather than an established result.
-
-## Verification log
-
-Everything below was open at an earlier draft and has since been checked. Four
-items changed a conclusion.
-
-| Item | Result | Effect |
-| --- | --- | --- |
-| Is `cosmos-sdk` forked? | **No.** The `replace` to `../goat-cosmos-sdk` is commented out; `GOATNetwork/goat-cosmos-sdk` returns 404. Only `go-ethereum => GOATNetwork/goat-geth v0.4.1` is an active source replace | **Correction.** Consensus-key migration is a plain v0.53.8 → v0.55 dependency upgrade, not a fork rebase. Moves *up* the order |
-| BLS12-381 usage in `goat` | **Load-bearing.** `pkg/crypto/blst.go` implements `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_` with `AggregateVerify`; relayers hold a 96-byte G2 `VoteKey` distinct from their `TxKey` and their attestation `PublicKey` | **New surface, and the hardest one.** See below |
-| `x/bitcoin` crypto surface | Bitcoin SPV/deposit verification: `witness` 214, `sha256` 33, `secp256k1` 32, `schnorr` 24, `taproot` 4 | Confirms L1 verification is secp256k1/Schnorr-bound; no new scheme |
-| `x/locking` crypto surface | `pubkey` 133, `secp256k1` 18, `ecdsa` 1 — validator locking keys | No new scheme |
-| `x/consensusfork` crypto surface | Zero crypto references | Not a surface |
-| IBC beyond `go.mod` | No IBC wiring in `app/` either | **Confirmed.** The Cosmos IBC light-client hazard does not apply |
-| Do `goat-geth`'s 37 commits touch crypto? | **No.** They concentrate in `core/types` (23 files), `eth/tracers`, `eth/catalyst`, `core/goat`; `params/config.go` is the only config-adjacent file. `core/vm/contracts.go` and `crypto/` are untouched | Precompiles are inherited from upstream unchanged, so the fix must come from upstream |
-| Does the designated-verifier variant remove pairings? | **No.** `dv_bn254/dv_snark.rs` uses `ark_bn254::G1Projective` with a trapdoor | DV is not a post-quantum path |
-| `sect233k1` field size | GF(2^233) confirmed — 233 secret input wires, 233 coefficient bits, 30-byte encodings | Binary Koblitz curve; still Shor-exposed, below secp256k1 classically |
-| Is the garbling hash fixed to AES-128? | **No.** `verifiable-circuit` exposes `aes`, `blake3`, `sha2` and `poseidon2` feature flags | Softens the AES point: the PRF is a build-time choice. `LABEL_SIZE = 16` is the parameter that matters, and it is fixed |
-
-### The relayer's BLS vote key is the hardest single item
-
-This changes the relayer recommendation. The relayer carries **three** distinct
-key types, not one:
-
-| Key | Scheme | Purpose |
-| --- | --- | --- |
-| `PublicKey` (`oneof`) | secp256k1 **or** Schnorr | attestation / proposals |
-| `TxKey` | secp256k1 | transaction authorisation |
-| `VoteKey` | **BLS12-381 G2, 96-byte compressed** | voting, verified via `AggregateVerify` |
-
-Adding ML-DSA-65 to the `PublicKey` `oneof` remains correct and remains the
-cheapest first move, but it addresses only the attestation key. The vote key is a different problem, and a much harder one,
-because **its value is aggregation**. BLS lets N relayer votes verify as one
-48-byte signature. No standardised post-quantum signature aggregates: ML-DSA and
-SLH-DSA have no aggregation, so replacing BLS naively turns one signature into
-N, at 3309 bytes each. For twenty relayers that is roughly 66 KB where there was
-48 bytes.
-
-**Aggregation is confirmed in use, not merely available.** The presence of an
-aggregate API is weaker evidence than it appears; what settles it is the call
-site, `x/relayer/keeper/proposal.go:66`:
-
-```go
-sigdoc := types.VoteSignDoc(req.MethodName(), sdkctx.ChainID(),
-                           relayer.Proposer, sequence, relayer.Epoch, req.VoteSigDoc())
-if !goatcrypto.AggregateVerify(pubkeys, sigdoc, req.GetVote().GetSignature()) {
-    return 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "verify aggregation signature failed")
-}
-```
-
-which resolves to `signature.FastAggregateVerify(true, pubkeys, msg, blsMode)` in
-`pkg/crypto/blst.go`. `FastAggregateVerify` is specifically the
-many-signers-one-message case, and the surrounding code confirms the shape: a
-participation bitmap selects voters, the proposer's `VoteKey` and each selected
-voter's are collected, participation is checked against `relayer.Threshold()`,
-and **one** aggregate signature is verified against **N** public keys over a
-single `sigdoc`. Relayer consensus is therefore a threshold vote carried by one
-48-byte signature regardless of signer count — and the bitmap design exists
-precisely so that signer count can grow.
-
-### `leanVM` is not a way to keep BLS
-
-The obvious hope is to wrap the existing BLS verification in a post-quantum
-zkVM: prove inside `leanVM` that the aggregate verified, and inherit the zkVM's
-hash-based soundness. That does not work, in two distinct senses, and the second
-is a restatement of this report's central trap.
-
-**Mechanically, there is nothing to build on.** `leanEthereum/leanVM` contains no
-BLS or pairing code at all — searching its tree for `bls`, `pairing` and `bls12`
-returns zero files. What it is built from is KoalaBear (505 references),
-Poseidon (75) and WHIR (48), with XMSS across 26 files and a dedicated
-`crates/rec_aggregation`. It is purpose-built to recursively aggregate
-*hash-based* signatures. A BLS verifier could be written as a guest program, but
-emulating BLS12-381 pairing arithmetic over a 31-bit field is precisely the work
-that EVM chains give a native precompile to avoid.
-
-**And even if it were built, it would buy nothing.** Proving "this BLS aggregate
-verified" inside a hash-based zkVM yields a post-quantum-sound *proof* of a
-quantum-broken *statement*. An adversary who can forge BLS signatures forges one
-and then honestly proves that it verified; the zkVM faithfully attests to a true
-claim about a dead assumption. This is the same error as Winternitz commitments
-carrying a Groth16 proof and garbled circuits garbling a Groth16 verifier — the
-third instance in this one stack, and the first that would be a *prospective*
-mistake rather than an existing one.
-
-**What `leanVM` actually offers is the removal of the need for BLS.** BLS was
-chosen for one property, aggregation. Hash-based signatures are post-quantum but
-do not aggregate. Recursive proving restores that property. The path is
-therefore:
-
-```
-BLS                    hash-based signatures       + recursive aggregation
-(aggregates, broken) →  (safe, N x 3309 bytes)  →  (aggregation restored)
-```
-
-not "keep BLS and add a zkVM". The ordering matters: the signature scheme is
-replaced first, and recursion recovers what the replacement costs.
-
-Concretely for GOAT, `AggregateVerify` at `proposal.go:66` is not wrapped, it is
-replaced, with the threshold-and-bitmap voting logic rebuilt around a hash-based
-scheme plus recursion. GOAT already operates a zkVM (Ziren) and a garbling
-stack, so the ingredients are unusually close to hand — but this is an
-architectural workstream, not a key-type change, and it should be planned
-separately from the attestation-key work.
-
-### Follow-up checks, 2026-07-31
-
-| Checked | Result |
-| --- | --- |
-| How does Ethereum plan to make the *execution layer* post-quantum? | Three Draft Core EIPs: **7885** (NTT precompile, scheme-agnostic), **8141** (Frame Transaction, PQ signature slot), **8151** (Account Code Restricted `ecRecover`). EIP-7702 is Final and is the bridge |
-| Is a precompile really unmigratable? | **Refined.** EIP-8151 narrows `ecRecover` conditionally on account code rather than removing it. That lever exists for identity-bound precompiles; it does not exist for stateless ones like `bn256Pairing`, and no EIP proposes replacing those |
-| Does Ethereum have a stated plan for the pairing precompiles? | **No.** The official quantum-resistance page does not treat precompiles as a category. KZG is covered, with a commitment to replace it by a STARK- or lattice-based scheme; BN254 and BLS12-381 are not mentioned |
-| Does KZG's honest trusted setup help against quantum? | **Only against a different threat.** The roadmap notes the setup stays secure if one participant discarded their secret, which addresses setup compromise. KZG's *binding* rests on pairings, so a quantum adversary forges openings regardless of how honest the ceremony was. The two should not be conflated |
-| Is BLS aggregation actually *used*, or just available? | **Used.** `x/relayer/keeper/proposal.go:66` calls `AggregateVerify`, resolving to `FastAggregateVerify` over a bitmap-selected voter set against `relayer.Threshold()`. Upgraded from inference to a call site |
-| Could `leanVM` aggregate BLS instead? | **No.** Zero `bls`/`pairing`/`bls12` files in its tree; it is KoalaBear, Poseidon, WHIR and XMSS with a `rec_aggregation` crate. And proving a BLS verification inside a hash-based zkVM proves a true statement about a broken primitive |
-
-### Consistency re-check of the base-layer sections, 2026-07-31
-
-The Bitcoin and Ethereum sections were written first and re-checked against
-primary sources after the rest of the report was complete. Two corrections
-followed, both understatements rather than errors of fact.
-
-| Checked | Result |
-| --- | --- |
-| Does a post-quantum signature BIP exist yet? | **No.** The BIPs index still lists exactly one post-quantum entry, BIP-361 itself. The core finding holds |
-| BIP-360 status and version | Unchanged: `Status: Draft`, v0.12.0, `Layer: Consensus (soft fork)` |
-| Is the 34% figure really BIP-361's? | Yes, line 46: "As of March 1, 2026, over 34% of all bitcoin have revealed a public key on-chain" |
-| BIP-361 phase timings | Phase A at 160,000 blocks (~3 years); Phase B 2 years after Phase A |
-| Is Phase B a freeze? | **No — correction.** It encumbers legacy spends with a rescue protocol based on BIP-32 hardened-derivation knowledge, verified by ZK-STARK or commit/reveal. Only abandoned keys and P2PK, which has no known knowledge asymmetry, become unspendable |
-| Is Ethereum's plan aggregation-only? | **No — correction.** The report omitted the account track: the emergency hard fork with STARK preimage recovery, EIP-7702 (Final, Pectra) and EIP-8141 (Draft, created 2026-01-29) |
-
-The second correction also surfaced something the report had missed entirely,
-now section 7: both chains independently chose the same rescue technique.
 
 ## Remaining open items
 
@@ -1033,7 +1138,8 @@ Honestly short, and none of them block the recommendations:
 
 ## References
 
-Primary sources, all verified live on 2026-07-31.
+Primary sources. Verified live on 2026-07-31; the aggregation sources on
+2026-08-01.
 
 - BIP-360, *Pay-to-Merkle-Root (P2MR)* — <https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki>
 - BIP-361, *Post Quantum Migration and Legacy Signature Sunset* — <https://github.com/bitcoin/bips/blob/master/bip-0361.mediawiki>
@@ -1046,6 +1152,14 @@ Primary sources, all verified live on 2026-07-31.
 - `leanEthereum/leanSig` — <https://github.com/leanEthereum/leanSig>
 - `b-wagn/hash-sig`, eprint 2025/055 — <https://github.com/b-wagn/hash-sig>
 - Ziren issue #276, *Replace hash-to-curve in multiset hash by quantum safe primitives* — <https://github.com/ProjectZKM/Ziren/issues/276>
+- CometBFT, `types/block.go` (`Commit`, `CommitSig`, `MaxCommitBytes`) — <https://github.com/cometbft/cometbft/blob/main/types/block.go>
+- CometBFT, `types/params.go` (`DefaultBlockParams`) — <https://github.com/cometbft/cometbft/blob/main/types/params.go>
+- CometBFT issue #3455, *BLS signature aggregation* — <https://github.com/cometbft/cometbft/issues/3455>
+- A. Bienstock, L. de Castro, D. Escudero, A. Polychroniadou, A. Takahashi, *Quorus: Efficient, Scalable Threshold ML-DSA Signatures from MPC*, USENIX Security 2026 — <https://eprint.iacr.org/2025/1163>
+- S. Celi, R. del Pino, T. Espitau, G. Niot, T. Prest, *Efficient Threshold ML-DSA* — <https://eprint.iacr.org/2026/013>
+- K. Boudgoust, A. Takahashi, *Sequential Half-Aggregation of Lattice-Based Signatures*, ESORICS 2023 — <https://eprint.iacr.org/2023/159>
+- M. Aardal, D. Aranha, K. Boudgoust, S. Kolby, A. Takahashi, *Aggregating Falcon Signatures with LaBRADOR*, CRYPTO 2024 — <https://eprint.iacr.org/2024/311>
+- NIST, *Multi-Party Threshold Cryptography* (IR 8214C, final 2026-01-20) — <https://csrc.nist.gov/projects/threshold-cryptography>
 - `GOATNetwork/goat` — <https://github.com/GOATNetwork/goat>
 - `GOATNetwork/goat-geth` — <https://github.com/GOATNetwork/goat-geth>
 - `GOATNetwork/bitvm2-node` — <https://github.com/GOATNetwork/bitvm2-node>
