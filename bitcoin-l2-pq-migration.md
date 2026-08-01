@@ -81,45 +81,6 @@ ownership question explicit before the scheme-selection question.
 The grouping, not the list, is the point: three different parties hold the fix,
 and only the middle group is the L2's to schedule.
 
-Two rows carry most of the signal.
-
-**Row 3 fails differently, not more severely.** Rows 1, 2 and 3 all terminate in
-the same place — loss of pegged funds — so ranking them by severity carries no
-information. Three axes separate them:
-
-| | Is the failure silent? | Attacker effort | Tractability of the fix |
-| --- | --- | --- | --- |
-| Row 1, L1 outputs | no, theft is visible | key recovery | not fixable by the L2 |
-| Row 2, operator keys | no | compromise a threshold | key-type swap, unless aggregated |
-| Row 3, proof system | **yes** | forge a proof | **varies enormously by sub-layer** |
-
-Row 3's failure is **silent**: the verifier behaves exactly as specified while
-accepting falsehoods. That earns it attention, not first place. An exposed
-Taproot key path is easier to attack and cheaper to fix, which is why Part IV
-orders it ahead.
-
-**Tractability within row 3 varies more than between rows.** Pairing-based
-systems (Groth16, PLONK over BN254/BLS12-381) fall to Shor exactly as ECDSA
-does. But a proof system is not one thing: its sub-layers range from a drop-in
-primitive swap to a full rebuild, and the worked example in Part III has all
-three kinds at once.
-
-**And "STARK" is not by itself an answer.** A zkVM's headline commitment can be
-hash-based while an auxiliary argument inside it is not. In the stack examined
-here, FRI is hash-based, but the offline memory-consistency check commits memory
-values as elliptic-curve points and rests explicitly on DLOG hardness — so a
-quantum adversary attacks the memory argument, not FRI. **Ask not "is it a
-STARK" but "what does every argument in this proof assume" — and expect the
-answer to live in the project's issue tracker.**
-
-**Row 4 is the good news, and it is frequently missed.** Bridge constructions
-that commit data via Merkle trees, or that carry values through Bitcoin script
-using Winternitz/Lamport one-time signatures, are already post-quantum on the
-most conservative assumption available — the same assumption behind SLH-DSA. In
-the one stack examined closely, this turned out to be true of the entire
-Bitcoin-side commitment layer, which reframed the migration from a rewrite into
-a contained swap.
-
 ---
 
 # Part II — The base layers an L2 inherits from
