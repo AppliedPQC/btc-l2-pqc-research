@@ -9,7 +9,7 @@ from [`cosmos/cosmos-sdk`](https://github.com/cosmos/cosmos-sdk), the
 [GOAT repositories](https://github.com/GOATNetwork) and their dependency trees
 read through the GitHub API and local clones, and — for section 10 — the BABE
 and Argo MAC papers alongside GOAT's own
-[partial-binding witness encryption design doc](https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex). Claims are stated as verified; checks
+[Deferred Binding design doc](https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex). Claims are stated as verified; checks
 still outstanding are listed under *Remaining open items*.
 
 ## Abstract
@@ -493,7 +493,7 @@ layers, not one:
 | Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | ZKM, [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) — **prototype exists** ([`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash)) |
 | Groth16 wrap | **BN254 pairing** | **broken** | GOAT |
 | `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
-| BABE / partial-binding WE | witness encryption **against the Groth16 relation** | on-chain surface safe, **relation broken** | GOAT — see section 10 |
+| BABE / Deferred Binding | witness encryption **against the Groth16 relation** | on-chain surface safe, **relation broken** | GOAT — see section 10 |
 | WOTS commitment into script | hash-based | safe | — |
 
 The two hash-based layers at the ends are fine. Everything between them depends
@@ -525,7 +525,7 @@ that moves is the *execution* and the thing that never moves is the *assertion*.
 | BitVM2 | Groth16 verifier compiled to Bitcoin script | on-chain: Disprove script of several hundred KB, **over \$14,000** in a recent unhappy-path experiment | Groth16 / BN254 |
 | [BitVM3](https://eprint.iacr.org/2026/933) | verifier circuit *garbled*; dispute evaluates the garbling | on-chain cost collapses, but the garbled circuit is **42 GiB** | Groth16 / BN254 |
 | [BABE](https://eprint.iacr.org/2026/065) | witness encryption for linear pairing relations, plus a garbled EC scalar-mul for the non-linear part | off-chain storage and setup, **~1000× lower** than BitVM3 | Groth16 / BN254 |
-| [Partial-binding WE](https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex) (GOAT) | BABE extended so part of the public input may be fixed *after* garbling | makes BABE usable when L2 state is only known at peg-out | Groth16 / BN254 |
+| [Deferred Binding](https://hackmd.io/@goatresearch/HkKp2g1Zfl) (GOAT) | BABE extended so part of the public input may be fixed *after* garbling | makes BABE usable when L2 state is only known at peg-out | Groth16 / BN254 |
 
 The right-hand column is constant. That is the finding, and everything below is
 the evidence for it.
@@ -553,7 +553,9 @@ GOAT's contribution sits on top of that stack. Vanilla BABE requires the full
 public input to be fixed before garbling, which the bridge cannot do: the
 dynamic part $x_D$ — L2 state, sequencer commitments, watchtower data — is only
 known at peg-out, so by then the committed $vk_x$ is stale and decryption fails.
-[Partial-binding WE](https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex)
+[**Deferred Binding**](https://hackmd.io/@goatresearch/HkKp2g1Zfl) — whose formal
+write-up defines the primitive it rests on,
+[partial-binding witness encryption](https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex) —
 resolves this with a **Dual-Scalar Garbled Circuit** whose two outputs,
 $r \cdot \pi_1$ and $r \cdot P_D + r \cdot B$, "provide prefix binding on $x_S$
 and proactive cryptographic binding on $x_D$", with $B$ a verifier-chosen
@@ -626,7 +628,7 @@ encrypted against*, which is the one place the vocabulary never points.
 
 ### The new finding: Ziren moves onto the dispute path
 
-Partial-binding WE needs *soldering* — translating garbled labels across
+Deferred Binding needs *soldering* — translating garbled labels across
 cut-and-choose instances — and proves it in a zkVM. The
 [`babe-programs`](https://github.com/GOATNetwork/bitvm2-gc/tree/feat/goat-bitvm3/babe-programs)
 workspace has `soldering/guest` and `soldering/host` members, and the guest is a
@@ -1294,6 +1296,6 @@ On-chain proof verification (section 10). Verified 2026-08-02.
 - L. Eagen, Y. T. Lai, *Argo MAC: Garbling with Elliptic Curve MACs* — <https://eprint.iacr.org/2026/049>
 - N. Khambhati, A. Bhattacharya, D. Heath, *Duty-Free Bits: Projectivizing Garbling Schemes* — <https://eprint.iacr.org/2026/476>
 - R. Linus et al., *BitVM3: Efficient Bitcoin Bridges via Garbled Circuits* — <https://eprint.iacr.org/2026/933>
-- GOAT, *Partial-Binding Witness Encryption over Groth16* (design doc, `docs/partial_binding_we.tex`) — <https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex>
 - GOAT Research, *Deferred Binding: Extending BABE for Dynamic Public Inputs in GOAT BitVM3* — <https://hackmd.io/@goatresearch/HkKp2g1Zfl>
+- GOAT, *Partial-Binding Witness Encryption over Groth16* — the formal write-up of the primitive Deferred Binding rests on (`docs/partial_binding_we.tex`) — <https://github.com/GOATNetwork/bitvm2-gc/blob/feat/goat-bitvm3/docs/partial_binding_we.tex>
 - `bitvm2-gc`, branch `feat/goat-bitvm3` (`verifiable-circuit-babe`, `babe-programs/soldering`) — <https://github.com/GOATNetwork/bitvm2-gc/tree/feat/goat-bitvm3>
