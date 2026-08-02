@@ -685,109 +685,113 @@ component rather than a swap of a wrapper.
 ### Remove the EC based proof verifier
 
 The report says to remove the Groth16 verifier; it owes an answer to what takes
-its place. The answer turns on a distinction about Bitcoin script that is easy
-to get backwards, so it is worth establishing before naming candidates.
+its place. What decides the answer is not proof size but which opcodes Bitcoin
+has, and the rule is narrower than it first appears.
 
-**Script can do arithmetic. It cannot hash a concatenation.** There is no
+**Script can do arithmetic; it cannot hash a concatenation.** There is no
 multiplication opcode — `OP_MUL`, `OP_DIV`, `OP_MOD`, `OP_LSHIFT` and
-`OP_RSHIFT` are all disabled — so multiplication is emulated by double-and-add,
-and BitVM does exactly that:
-[`bitvm/src/bigint/mul.rs`](https://github.com/bitvm/bitvm) decomposes one
-operand to bits on the altstack and loops, doubling and conditionally adding a
-limbed integer. It works at 254 bits today. The entire Groth16 verifier BitVM2
+`OP_RSHIFT` are disabled — so multiplication is emulated by double-and-add, and
+[BitVM](https://github.com/bitvm/bitvm) does exactly that in
+`bitvm/src/bigint/mul.rs`, decomposing one operand to bits and looping over a
+limbed integer. It works at 254 bits today: the whole Groth16 verifier BitVM2
 puts in script is built from `bigint`, `bn254`, `u32` and `u4`, and contains
-**zero uses of `OP_CAT`**; hashing appears only in `signatures/winternitz.rs`,
-for bit commitments. Emulated modular arithmetic needs no consensus change.
-
-Concatenation does. `OP_CAT` is disabled, and so are `OP_SUBSTR`, `OP_LEFT` and
-`OP_RIGHT`, so a script cannot form the two-child preimage a Merkle step hashes.
+**zero uses of `OP_CAT`**. Emulated modular arithmetic needs no consensus
+change. Concatenation does — `OP_CAT`, `OP_SUBSTR`, `OP_LEFT` and `OP_RIGHT` are
+all disabled, so a script cannot assemble the two-child preimage that a
+SHA256 Merkle step hashes.
 [BIP-347](https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki)
-("OP_CAT in Tapscript", Heilman and Sabouri, `Layer: Consensus (soft fork)`)
-would re-enable it; its status is `Complete`, meaning the specification is
-finished, not that it is deployed.
+would re-enable `OP_CAT`; its status is `Complete`, meaning specified, not
+deployed.
 
-That single fact sorts the candidates.
+**The `OP_CAT` dependency is a choice of hash, not a property of the proof
+system.** A verifier needs concatenation only if its commitments are built on a
+byte-oriented hash. An *algebraic* hash — Poseidon2 and its relatives — is a
+permutation over field elements, so hashing becomes multiplication and addition,
+which is the operation script already emulates. Choose the algebraic hash and
+the soft-fork dependency disappears.
 
-#### FRI and Basefold need a soft fork
+Ziren has already made that choice. `crates/primitives/src/lib.rs` builds its
+commitments from `Poseidon2KoalaBear<16>` through a `PaddingFreeSponge`, with
+`ROUNDS_F = 8` and `ROUNDS_P = 13`. Its Merkle trees and transcript are
+KoalaBear arithmetic, not SHA256 over concatenated bytes.
 
-FRI's verifier is Merkle-path checking and a Fiat–Shamir transcript, and
-Basefold, which generalises the FRI IOPP to any foldable code
-([Zeilberger, Chen and Fisch](https://eprint.iacr.org/2023/1705)), commits the
-same way. Both are hash-committed, so both need concatenation.
+That reopens the field. Both remaining candidates are expressible on the Bitcoin
+that exists.
 
-The implementation confirms it:
+#### FRI over an algebraic hash
+
+A FRI verifier is Merkle-path checking, a Fiat–Shamir transcript and a folding
+check. With Poseidon2 commitments all three are field arithmetic over a 31-bit
+prime, which fits a script number directly — no multi-limb representation, and
+no soft fork. Ziren already produces exactly these proofs, so the prover does
+not change.
+
+The cost is the hash. A width-16 Poseidon2 permutation with an x³ S-box runs
+roughly 8×16 + 13 S-boxes, two multiplications each, plus the internal diagonal
+layer: on the order of 280 general multiplications and 200 by constants.
+[`rust-bitcoin-m31`](https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31)
+measures 31-bit field multiplication in script at **1060 weight units** and
+multiplication by a constant at ~750, so **one permutation is roughly 450,000
+weight units** — more than `MAX_STANDARD_TX_WEIGHT` (400,000), and a Merkle path
+needs one per level. That figure is derived from a round count and a measured
+primitive, not measured end to end, and it is the number that most needs
+checking.
+
+This is also why
 [`bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
-builds a Circle STARK verifier in Bitcoin script — M31/CM31/QM31 arithmetic, the
-transcript, proof-of-work checking, FRI, Merkle paths — and its transcript and
-Merkle components are built on `OP_CAT` with `OP_SHA256`. The field arithmetic
-is affordable: [`rust-bitcoin-m31`](https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31)
-measures M31 multiplication at **1060 weight units** and addition at 18. The
-commitment layer is the part that does not exist without the soft fork.
+builds its transcript and Merkle components on `OP_CAT` with `OP_SHA256`: a
+byte hash is one opcode where an algebraic hash is hundreds of emulated
+multiplications. `OP_CAT` is not needed for FRI, it is what makes FRI cheap.
 
-So this route is not the L2's to schedule, and it lands exactly where section 4
-lands on signatures: waiting on Bitcoin. Basefold adds nothing that changes
-this — its advantage is field-agnosticism, which on a chain whose arithmetic is
-emulated anyway is not the binding constraint, and its verifier interleaves a
-sumcheck with the IOPP, which is more arithmetic on top of the same blocked
-commitment.
+#### Module-lattice arguments
 
-#### Module-lattice arguments need no fork, and are cheaper than what already ships
+Schemes in the LaBRADOR line commit **algebraically** — Ajtai/module-SIS
+commitments verified by ring arithmetic — so they have no hash in the opening at
+all, and no `OP_CAT` dependency for the same reason Ziren's Poseidon2 has none.
+Verification is ring multiplication over Z*q*[X]/(X^*d*+1), which is an NTT of
+*d* points, (*d*/2)·log₂*d* butterflies built from the double-and-add primitive
+BitVM already ships.
 
-Lattice schemes in the LaBRADOR line commit **algebraically** — Ajtai/module-SIS
-commitments verified by ring arithmetic — rather than through a Merkle tree. The
-verifier's work is exactly the kind script can already express, and BitVM has
-shipped the machinery for it at a harder size.
-
-The arithmetic is *smaller* than what BitVM already does. Its
-`U254 = BigIntImpl<254, 29>` is nine limbs, and `mul()` loops once per bit; a
-64-bit modulus at the same limb size is three. Taking the loop structure at face
-value, cost scales with bits × limbs, so a 64-bit modular multiplication is on
-the order of **twelve times cheaper** than the BN254 multiplication BitVM2's
-Groth16 verifier performs thousands of times. A ring multiplication over
-Z*q*[X]/(X^*d*+1) is an NTT of *d* points — (*d*/2)·log₂*d* butterflies — built
-from that same double-and-add primitive. It is more work than one field
-multiplication, and it is work of a kind Bitcoin script demonstrably performs.
-
-Proof sizes in this family are the smallest of any post-quantum system:
-[LaBRADOR](https://eprint.iacr.org/2022/1341) (Beullens and Seiler) reports
+The trade against FRI is field width. A 64-bit modulus needs three 29-bit limbs
+where a 31-bit field needs one, so each multiplication is dearer — though still
+cheaper than the nine-limb BN254 multiplication BitVM2 performs thousands of
+times, which is the strongest evidence the class of work is affordable. Against
+that, there is no per-level hash to pay, and proof sizes are the smallest of any
+post-quantum family: [LaBRADOR](https://eprint.iacr.org/2022/1341)
 **58 KB** for R1CS with 2²⁰ constraints,
 [SALSAA](https://eprint.iacr.org/2025/2124) **73 KB and 2.28 ms** verification
-for a 2²⁸-element witness, and
+for a 2²⁸-element witness,
 [RoKoko](https://eprint.iacr.org/2026/575) (Klooss, Lai, Nguyen, Osadnik and
 Tucci) roughly **200 KB** with about 100× faster verification than
 [Greyhound](https://eprint.iacr.org/2024/1293).
 
 #### Which to use
 
-**A module-lattice argument — RoKoko or another scheme in the LaBRADOR line — is
-the candidate to pursue.** It is the only post-quantum option whose verifier
-Bitcoin can express with the opcodes it has now, its arithmetic is cheaper than
-the pairing arithmetic BitVM2 already emulates, and it removes the elliptic
-curve rather than relocating it. FRI is the better fit for a Bitcoin that has
-`OP_CAT` and is unavailable on the Bitcoin that exists.
+**Both are viable without a soft fork, and the choice is a measurement rather
+than a research question.** That is the finding. The earlier reading of this
+row — that a post-quantum verifier on Bitcoin waits on `OP_CAT` — was wrong;
+`OP_CAT` decides how *expensive* a hash-committed verifier is, not whether one
+is possible.
 
-Three things are unestablished and should be settled before this is a plan
-rather than a direction.
+The two differ in where the cost falls. FRI over Poseidon2 keeps a 31-bit field
+and needs no change of prover, but pays a few hundred multiplications per Merkle
+level. A module-lattice argument pays wider limbs and an NTT, but has no hash in
+the opening and the smallest proofs available. Neither has been written in
+Bitcoin script, so neither cost is known.
 
-- **No lattice verifier has been written in Bitcoin script.** The estimate above
-  compares primitive operations, not verifiers. The operation count of a RoKoko
-  or LaBRADOR verifier, and therefore its script weight, has not been measured
-  by anyone.
-- **RoKoko's concrete ring parameters are not in its abstract.** The modulus
-  width drives the limb count and so the whole cost, and it has to be read out
-  of the paper rather than assumed from the family.
-- **Fiat–Shamir still needs a hash.** An algebraic commitment removes Merkle
-  verification from the script, but a non-interactive proof still derives
-  challenges by hashing a transcript. BitVM's structure offers a way around it —
-  challenges can come from the on-chain challenge–response game, or be carried
-  in by Winternitz commitment as values already are — but which of those applies
-  here is a design question that has not been answered.
+What follows is a concrete piece of work rather than a wait: **count the
+multiplications in each verifier and price them against the measured 1060
+weight units.** `MAX_STANDARD_TX_WEIGHT` is 400,000 and `MAX_BLOCK_WEIGHT` is
+4,000,000, and BitVM already chunks a verifier across a disprove pattern, so the
+question is how many chunks each option needs, not whether either fits a single
+transaction.
 
-Two consequences for weight, both usable now: `MAX_STANDARD_TX_WEIGHT` is
-400,000 and `MAX_BLOCK_WEIGHT` is 4,000,000, so a candidate verifier's script
-has to be chunked to fit the disprove pattern BitVM already uses. That chunking
-is the same problem BitVM2 solved for Groth16, which is the strongest evidence
-that the shape of the work is known even though the instance is new.
+Two things remain unestablished and should be settled with it. RoKoko's concrete
+ring parameters are not in its abstract, and the modulus width drives its whole
+cost. And Fiat–Shamir needs a hash in both designs — either an algebraic one
+inside the script, or none at all if the challenge comes from BitVM's on-chain
+challenge–response rather than from a transcript, which would remove the largest
+cost in the FRI column and should be settled first.
 
 ### Verdict
 
@@ -1249,7 +1253,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
 | 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement. Now load-bearing twice, since BABE soldering also proves in Ziren (section 9) |
-| 4 | **Stop verifying a pairing on Bitcoin**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254, and track `OP_CAT` (BIP-347) as the change that would let a hash-based proof be checked in script directly | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and the BABE work cuts against it: BABE lowers the cost of *keeping* Groth16. Section 9's point is that the elaborate machinery exists because Bitcoin cannot verify a pairing at all — with `OP_CAT` a hash-based verifier becomes the simplest design here, so the L2's leverage is partly upstream |
+| 4 | **Stop verifying a pairing on Bitcoin**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254. First count the multiplications in a Poseidon2-committed FRI verifier and in a module-lattice verifier, and price both against the 1060 weight units a 31-bit field multiplication costs in script | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and BABE cuts against it by lowering the cost of *keeping* Groth16. But section 9 finds both post-quantum candidates expressible with the opcodes Bitcoin has — no soft fork — so what gates the decision is a measurement nobody has run, and it can be run now |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade rather than a rebase |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
@@ -1383,6 +1387,7 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - Bitcoin Core, `src/policy/policy.h` (`MAX_STANDARD_TX_WEIGHT`) — <https://github.com/bitcoin/bitcoin/blob/master/src/policy/policy.h>
 - `BitVM/BitVM`, `bitvm/src/bigint/mul.rs` — double-and-add multiplication in Bitcoin script — <https://github.com/bitvm/bitvm>
 - `Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31`, measured M31 script weights — <https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31>
+- Ziren, `crates/primitives/src/lib.rs` (`Poseidon2KoalaBear<16>`, `ROUNDS_F = 8`, `ROUNDS_P = 13`) — <https://github.com/ProjectZKM/Ziren>
 - *Greyhound: Fast Polynomial Commitments from Lattices* — <https://eprint.iacr.org/2024/1293>
 - BIP-347, *OP_CAT in Tapscript* (E. Heilman, A. Sabouri; Consensus soft fork, Complete, not activated) — <https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki>
 - `Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`, a Circle STARK verifier in Bitcoin script — <https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark>
