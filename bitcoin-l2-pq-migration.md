@@ -685,54 +685,64 @@ component rather than a swap of a wrapper.
 ### What would replace it on chain
 
 The report says to remove the Groth16 verifier; it owes an answer to what takes
-its place. There is no settled candidate, and saying so is the honest position —
-but the candidate space is small, because the architecture constrains it.
+its place. The answer starts from a fact the whole BitVM line exists to work
+around: **Bitcoin cannot verify a Groth16 proof.** Script has no pairing
+operation and no way to add one, so every design in the table above is a way of
+*avoiding* on-chain verification — emulate the verifier in script and pay
+several hundred KB for a Disprove (BitVM2), garble it and move it off chain
+(BitVM3), or witness-encrypt against it so the chain only sees a hashlock
+(BABE). The elaborate machinery is a consequence of the pairing, not of the
+proof system's difficulty.
 
-What Groth16 supplies here is not proving power. It is **a constant-size proof
-that fits in Bitcoin script**: three BN254 group elements, 128 bytes, committed
-through Winternitz and checked by a verifier small enough to garble. Ziren
-already produces the hash-based execution proof. Groth16 is only the compressor
-on the end of it. So the question is not "which post-quantum proof system", it
-is *what can occupy that 128-byte slot without a pairing*.
+That reframes the migration. The goal is not to find a post-quantum proof small
+enough to fit the hole Groth16 leaves. It is to **stop needing the hole** — to
+put a proof on Bitcoin that Bitcoin can actually check.
 
-Two directions, and they differ in what they cost:
+**A hash-based proof is the one Bitcoin is suited to.** A FRI verifier is
+Merkle-path checking and a Fiat–Shamir transcript, which is to say hashing, and
+hashing is what script does natively in a single opcode. The costly primitive in
+Bitcoin script is algebraic, and a hash-based argument is the family that needs
+the least of it. On this axis the post-quantum choice is not a concession; it is
+the better fit.
 
-**Garble the hash-based verifier directly.** Skip the wrap: garble Ziren's
-FRI/Poseidon verifier and commit its proof. This removes the pairing outright
-and needs no new cryptography. The cost is size in both dimensions that BitVM is
-tight on — the verification transcript is a Merkle-and-hash argument rather than
-three group elements, and the circuit being garbled grows with it. The scale of
-the problem is visible in figures already in this report: BitVM3's garbled
-Groth16 verifier is 42 GiB, and the soldering proof Ziren produces for one
-cut-and-choose run is 56.92 MB. A hash-based verifier is the larger of the two
-objects, not the smaller.
+The work exists.
+[`Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
+implements a Circle STARK verifier in Bitcoin script as reusable components —
+M31/CM31/QM31 field arithmetic, the Fiat–Shamir transcript, proof-of-work
+checking, FRI low-degree testing, and Merkle path verification — and was still
+being pushed to in May 2026.
 
-**Keep the wrap, change what it wraps into.** The compressor architecture is
-sound; only its instantiation is pairing-based. Lattice-based succinct arguments
-are the post-quantum family with the smallest proofs, and they are close to
-practical: [LaBRADOR](https://eprint.iacr.org/2022/1341) (Beullens and Seiler)
-reports **58 KB** for an R1CS instance with 2²⁰ constraints and claims proofs
-"more compact than known hash-based proof systems ... an order of magnitude more
-compact than previous quantum-safe proofs";
+**The blocker is a soft fork, not cryptography.** Those components are built on
+`OP_CAT` together with `OP_SHA256`, and Bitcoin does not have `OP_CAT`.
+[BIP-347](https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki)
+("OP_CAT in Tapscript", Heilman and Sabouri, `Layer: Consensus (soft fork)`)
+re-enables it by redefining `OP_SUCCESS126`; its status is `Complete`, meaning
+the specification is finished, not that it is deployed. Concatenation is what a
+Merkle path and a transcript need, and without it the verifier cannot be
+expressed.
+
+So the honest position on this row is the same one section 4 reaches about
+signatures: **the L2 does not own the fix.** With `OP_CAT`, verifying a
+post-quantum proof directly on Bitcoin becomes the simplest design in this
+section rather than the hardest — no garbling, no cut-and-choose, no witness
+encryption, and no pairing to be broken. Without it, the L2 is choosing among
+ways to avoid on-chain verification, and every one of them currently avoids
+verifying something pairing-based.
+
+**If the wrap has to stay, the wrap is what changes.** Where a compressor is
+still needed — because the execution proof is too large to post — lattice-based
+succinct arguments are the post-quantum family with the smallest proofs:
+[LaBRADOR](https://eprint.iacr.org/2022/1341) (Beullens and Seiler) reports
+**58 KB** for R1CS with 2²⁰ constraints, claiming proofs "an order of magnitude
+more compact than previous quantum-safe proofs";
 [SALSAA](https://eprint.iacr.org/2025/2124) reports **73 KB and 2.28 ms
-verification** for a 2²⁸-element witness; and
+verification** for a 2²⁸-element witness;
 [RoKoko](https://eprint.iacr.org/2026/575) reports roughly 200 KB with markedly
-faster verification than [Greyhound](https://eprint.iacr.org/2024/1293).
-
-The second direction is the one worth measuring first, and the arithmetic is
-what phase 4 of section 14 asks for. Against Groth16's 128 bytes, a 58 KB
-replacement is a factor of roughly 450 in what has to be Winternitz-committed
-into script, before any change in the garbled verifier itself. Whether that
-closes is a question about Bitcoin's witness limits and challenge-transaction
-economics, not about cryptography, and it can be answered now — the proof sizes
-above are published and the script costs are measurable.
-
-Two cautions on that path. None of these systems has the deployment history
-Groth16 has, and none has a garbled-verifier implementation to build on, so the
-`bitvm2-gc` rebuild is real work either way. And the verifier still has to be
-small enough to garble: a small *proof* does not by itself imply a small
-*verifier circuit*, and it is the circuit that BitVM garbles. That second
-number is not in the papers above and would have to be established.
+faster verification than [Greyhound](https://eprint.iacr.org/2024/1293). None
+has a garbled-verifier implementation to build on, and a small *proof* does not
+imply a small *verifier circuit* — the circuit is what BitVM garbles, and that
+number is not in these papers. It would have to be established before the
+comparison in phase 4 of section 14 means anything.
 
 ### Verdict
 
@@ -1194,7 +1204,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
 | 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement. Now load-bearing twice, since BABE soldering also proves in Ziren (section 9) |
-| 4 | **Remove the Groth16 verifier from BitVM**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254. Measure the candidate replacements of section 9 — a directly garbled hash-based verifier, or a lattice-based wrap — against Bitcoin witness limits and the garbled-circuit size before committing to one | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and the BABE work cuts against it: BABE lowers the cost of *keeping* Groth16 and its witness encryption does not port to a hash-based verifier. The measurement is cheap, decides whether the rest is plannable, and can be done today, so run it early even though the work lands late |
+| 4 | **Stop verifying a pairing on Bitcoin**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254, and track `OP_CAT` (BIP-347) as the change that would let a hash-based proof be checked in script directly | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and the BABE work cuts against it: BABE lowers the cost of *keeping* Groth16. Section 9's point is that the elaborate machinery exists because Bitcoin cannot verify a pairing at all — with `OP_CAT` a hash-based verifier becomes the simplest design here, so the L2's leverage is partly upstream |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade rather than a rebase |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
@@ -1323,6 +1333,8 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - *SALSAA — Sumcheck-Aided Lattice-based Succinct Arguments and Applications* — <https://eprint.iacr.org/2025/2124>
 - *RoKoko: Lattice-based Succinct Arguments, a Committed Refinement* — <https://eprint.iacr.org/2026/575>
 - *Greyhound: Fast Polynomial Commitments from Lattices* — <https://eprint.iacr.org/2024/1293>
+- BIP-347, *OP_CAT in Tapscript* (E. Heilman, A. Sabouri; Consensus soft fork, Complete, not activated) — <https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki>
+- `Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`, a Circle STARK verifier in Bitcoin script — <https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark>
 - `GOATNetwork/goat` — <https://github.com/GOATNetwork/goat>
 - `GOATNetwork/goat-geth` — <https://github.com/GOATNetwork/goat-geth>
 - `GOATNetwork/bitvm2-node` — <https://github.com/GOATNetwork/bitvm2-node>
