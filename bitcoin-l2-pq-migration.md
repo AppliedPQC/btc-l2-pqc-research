@@ -818,15 +818,49 @@ argument has no hash in the opening and the smallest proofs available, but
 reaches back into the prover: it needs either a lattice zkVM that does not
 exist, or a recursion layer wrapping Ziren's STARK that also does not exist.
 That asymmetry favours FRI on everything except the per-level hash, which is
-precisely why that one number decides it. Neither verifier has been written in
-Bitcoin script, so neither cost is known.
+precisely why that one number decides it.
 
-What follows is a concrete piece of work rather than a wait: **count the
-multiplications in each verifier and price them against the measured 1060
-weight units.** `MAX_STANDARD_TX_WEIGHT` is 400,000 and `MAX_BLOCK_WEIGHT` is
-4,000,000, and BitVM already chunks a verifier across a disprove pattern, so the
-question is how many chunks each option needs, not whether either fits a single
-transaction.
+#### The FRI side is no longer an estimate
+
+That number has now been measured, by writing the verifier:
+[`bitcoin-stark-verifier`](https://github.com/AppliedPQC/bitcoin-stark-verifier)
+implements Poseidon2 over KoalaBear and a WHIR opening verifier in Bitcoin
+script, with **zero uses of `OP_CAT`** or any other disabled opcode. Its
+end-to-end test runs [Plonky3](https://github.com/Plonky3/Plonky3)'s real prover,
+checks the proof with Plonky3's own verifier, then re-derives the same claims in
+script and executes them — no hand-built vectors.
+
+| | script bytes |
+| --- | --- |
+| One 31-bit field multiplication | 1,446 |
+| One Poseidon2 permutation | 572,228 — about **396 multiplications** |
+| One Merkle level | 572,252 |
+| Merkle path, depth 21 | 12,017,292 |
+
+The estimate above — *a few hundred multiplications per Merkle level* — was
+right. What it did not convey is the consequence.
+
+**One Merkle level does not fit in a standard transaction.** At 572,252 bytes it
+is over `MAX_STANDARD_TX_WEIGHT` by 43%, and a depth-21 path is 12 MB, or three
+full blocks. So the answer to *how many chunks* is not a modest number for the
+FRI route: it is more than one chunk per hash, before any sumcheck or final
+evaluation is counted.
+
+Two further findings change where optimisation effort should go. In a fully
+composed verifier at 100-bit security — roughly 135 MB — **Merkle work is 99.3%
+of the script**; sumcheck rounds at 95,100 bytes each and the closing identity at
+1,447 are rounding error. And multilinear evaluation is **exponential in the
+variable count**, about 23.9 KB × 2ⁿ, so it passes Merkle work at around twelve
+variables and becomes the binding term for any realistic witness.
+
+The measurement is a lower bound, not a simulation of GOAT's pipeline: it
+verifies a WHIR opening and its sumcheck over a six-variable witness, not a zkVM
+execution proof. It settles the cheap end, which is what the comparison needed.
+
+**The lattice side remains unmeasured**, and the asymmetry now runs the other
+way: FRI's cost is known and large, while the module-lattice verifier's is
+unknown but has no per-level hash to pay. That is the remaining measurement, and
+it is now the one that decides the row.
 
 Two things remain unestablished and should be settled with it. RoKoko's concrete
 ring parameters are not in its abstract, and the modulus width drives its whole
@@ -1295,7 +1329,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
 | 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement. Now load-bearing twice, since BABE soldering also proves in Ziren (section 9) |
-| 4 | **Stop verifying a pairing on Bitcoin**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254. First count the multiplications in a Poseidon2-committed FRI verifier and in a module-lattice verifier, and price both against the 1060 weight units a 31-bit field multiplication costs in script | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and BABE cuts against it by lowering the cost of *keeping* Groth16. But section 9 finds both post-quantum candidates expressible with the opcodes Bitcoin has — no soft fork — so what gates the decision is a measurement nobody has run, and it can be run now |
+| 4 | **Stop verifying a pairing on Bitcoin**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254. The FRI half of that comparison is now measured — one Merkle level is 572,252 script bytes, over `MAX_STANDARD_TX_WEIGHT` — so what remains is the module-lattice verifier | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and BABE cuts against it by lowering the cost of *keeping* Groth16. But section 9 finds both post-quantum candidates expressible with the opcodes Bitcoin has — no soft fork — and half the deciding measurement now exists, so what gates the decision is the lattice verifier's cost |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade rather than a rebase |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
@@ -1393,6 +1427,14 @@ Honestly short, and none of them block the recommendations:
   cut-and-choose and cost figures are taken from GOAT's note rather than
   reproduced; only the dependency structure, the Ziren pin and the garbling
   parameters were read from the tree.
+- The module-lattice verifier has not been written in Bitcoin script, so its
+  cost is unknown. The FRI side is now measured, which makes this the one number
+  that still decides the proof-system row.
+- The measured verifier covers a WHIR opening and its sumcheck over a
+  six-variable witness, not a zkVM execution proof, and composes independent
+  Merkle paths where the proof carries a pruned frontier. Both make it a lower
+  bound; a batched verifier sharing internal nodes would be cheaper by some
+  factor not yet established.
 - No second L2 has been examined, so Part I's taxonomy is structural reasoning
   supported by one case, not a survey.
 
@@ -1431,6 +1473,7 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - `Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31`, measured M31 script weights — <https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31>
 - Ziren, `crates/primitives/src/lib.rs` (`Poseidon2KoalaBear<16>`, `ROUNDS_F = 8`, `ROUNDS_P = 13`) — <https://github.com/ProjectZKM/Ziren>
 - *Greyhound: Fast Polynomial Commitments from Lattices* — <https://eprint.iacr.org/2024/1293>
+- `AppliedPQC/bitcoin-stark-verifier` — Poseidon2 and a WHIR opening verifier in Bitcoin script, without `OP_CAT` — <https://github.com/AppliedPQC/bitcoin-stark-verifier>
 - BIP-347, *OP_CAT in Tapscript* (E. Heilman, A. Sabouri; Consensus soft fork, Complete, not activated) — <https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki>
 - `Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`, a Circle STARK verifier in Bitcoin script — <https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark>
 - `GOATNetwork/goat` — <https://github.com/GOATNetwork/goat>
