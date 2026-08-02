@@ -1110,9 +1110,13 @@ order:
    operator or relayer set is the peg's trust root; compromising a threshold is
    equivalent to compromising the peg. It is entirely the L2's to change, and it
    can usually be rolled out with dual signing, giving rollback at every step.
-2. **Bridge proof system** (row 3). Highest severity. Fixes soundness rather
-   than theft. Usually the largest engineering item, because proof size and
-   verification cost drive the L2's economics.
+2. **Bridge proof system** (row 3). Highest severity, and the hardest problem
+   in the list: it fixes soundness rather than theft, and it means removing the
+   Groth16 verifier the bridge is built around. Proof size and verification cost
+   drive the L2's economics, so a constant-size pairing proof cannot simply be
+   exchanged for a larger hash-based one. Sequenced second because it is
+   expensive and depends on upstream work, not because it is second in
+   difficulty.
 3. **Consensus keys** (row 5). Mechanism often already exists upstream — Cosmos
    SDK v0.55 ships ML-DSA-65 as an opt-in validator key type, for instance — so
    the work is frequently a dependency upgrade rather than cryptographic design.
@@ -1138,8 +1142,8 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
 | 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement. Now load-bearing twice, since BABE soldering also proves in Ziren (section 9) |
-| 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap. Sequence against the BABE work deliberately: BABE lowers the cost of *keeping* Groth16, and its witness encryption does not port to a hash-based verifier |
-| 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. A dependency upgrade, not a rebase |
+| 4 | **Remove the Groth16 verifier from BitVM**: re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254. Measure hash-based proof size against Bitcoin script weight before committing to it | The hardest item here, and the one that ships last. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild rather than a wrapper swap, and the BABE work cuts against it: BABE lowers the cost of *keeping* Groth16 and its witness encryption does not port to a hash-based verifier. The size measurement is cheap and decides whether the rest is plannable, so run it early even though the work lands late |
+| 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade rather than a rebase |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
