@@ -720,28 +720,45 @@ that exists.
 
 #### FRI over an algebraic hash
 
-A FRI verifier is Merkle-path checking, a Fiat–Shamir transcript and a folding
-check. With Poseidon2 commitments all three are field arithmetic over a 31-bit
-prime, which fits a script number directly — no multi-limb representation, and
-no soft fork. Ziren already produces exactly these proofs, so the prover does
-not change.
+**This is the proof GOAT already has.** Ziren is a FRI zkVM committing through
+Poseidon2 over KoalaBear: its manifest pulls `p3-fri`, `p3-merkle-tree` and
+`p3-commit` alongside `p3-koala-bear`, and `crates/primitives/src/lib.rs` builds
+the hasher as `Poseidon2KoalaBear<16>` through a `PaddingFreeSponge`, with
+`ROUNDS_F = 8` and `ROUNDS_P = 13`. Verifying it on Bitcoin means writing a
+verifier for proofs the bridge produces today — no new proof system, no change
+of prover, nothing to re-audit upstream.
+
+**And it needs no `OP_CAT`.** This is the point most likely to be doubted,
+because hashing is where concatenation normally enters. It does not enter here.
+A `PaddingFreeSponge<_, 16, 8, 8>` digest is **eight KoalaBear field elements,
+not thirty-two bytes**, so compressing two children feeds 8 + 8 = 16 field
+elements into a width-16 permutation — sixteen stack items handed to an
+arithmetic routine. There is nothing to concatenate; the "concatenation" is the
+order the state sits in. With SHA256 the two children are two 32-byte items and
+`OP_SHA256` hashes only one item, so they must first be fused into a single
+64-byte item, and that is `OP_CAT`. The dependency belongs to the byte hash, not
+to Merkle verification.
+
+So a FRI verifier — Merkle paths, transcript, folding check — is field
+arithmetic over a 31-bit prime, which fits a script number directly. No
+multi-limb representation and no soft fork.
 
 The cost is the hash. A width-16 Poseidon2 permutation with an x³ S-box runs
-roughly 8×16 + 13 S-boxes, two multiplications each, plus the internal diagonal
-layer: on the order of 280 general multiplications and 200 by constants.
+8×16 + 13 S-boxes at two multiplications each, plus the internal diagonal layer:
+on the order of 280 general multiplications and 200 by constants.
 [`rust-bitcoin-m31`](https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31)
 measures 31-bit field multiplication in script at **1060 weight units** and
-multiplication by a constant at ~750, so **one permutation is roughly 450,000
-weight units** — more than `MAX_STANDARD_TX_WEIGHT` (400,000), and a Merkle path
-needs one per level. That figure is derived from a round count and a measured
-primitive, not measured end to end, and it is the number that most needs
-checking.
+multiplication by a constant at ~750, putting **one permutation near 450,000
+weight units** — above `MAX_STANDARD_TX_WEIGHT` (400,000), with one per Merkle
+level. That figure is derived from a round count and a measured primitive rather
+than measured end to end, and it is the number that most needs checking.
 
 This is also why
 [`bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
-builds its transcript and Merkle components on `OP_CAT` with `OP_SHA256`: a
-byte hash is one opcode where an algebraic hash is hundreds of emulated
-multiplications. `OP_CAT` is not needed for FRI, it is what makes FRI cheap.
+builds its transcript and Merkle components on `OP_CAT` with `OP_SHA256`: a byte
+hash is one opcode where an algebraic hash is hundreds of emulated
+multiplications. `OP_CAT` is not what makes FRI *possible* on Bitcoin. It is
+what makes FRI *cheap*.
 
 #### Module-lattice arguments
 
@@ -752,12 +769,23 @@ Verification is ring multiplication over Z*q*[X]/(X^*d*+1), which is an NTT of
 *d* points, (*d*/2)·log₂*d* butterflies built from the double-and-add primitive
 BitVM already ships.
 
-The trade against FRI is field width. A 64-bit modulus needs three 29-bit limbs
-where a 31-bit field needs one, so each multiplication is dearer — though still
-cheaper than the nine-limb BN254 multiplication BitVM2 performs thousands of
-times, which is the strongest evidence the class of work is affordable. Against
-that, there is no per-level hash to pay, and proof sizes are the smallest of any
-post-quantum family: [LaBRADOR](https://eprint.iacr.org/2022/1341)
+Two trades against FRI. The first is field width: a 64-bit modulus needs three
+29-bit limbs where a 31-bit field needs one, so each multiplication is dearer —
+though still cheaper than the nine-limb BN254 multiplication BitVM2 performs
+thousands of times, which is the evidence the class of work is affordable.
+
+The second is larger and is about the prover, not the script. **Ziren is a FRI
+zkVM.** Adopting a lattice argument means either replacing it — no
+module-lattice zkVM is in production — or keeping it and proving *inside* a
+lattice argument that its STARK verified. That second option is sound rather
+than circular: unlike the Groth16 and BABE cases earlier in this section, the
+wrapped statement is itself post-quantum, so the composition inherits a
+post-quantum assumption rather than laundering a broken one. It is not the
+wrapper trap. But it is a recursion layer that does not exist yet, on top of a
+verifier nobody has written.
+
+Against those, there is no per-level hash to pay, and proof sizes are the
+smallest of any post-quantum family: [LaBRADOR](https://eprint.iacr.org/2022/1341)
 **58 KB** for R1CS with 2²⁰ constraints,
 [SALSAA](https://eprint.iacr.org/2025/2124) **73 KB and 2.28 ms** verification
 for a 2²⁸-element witness,
@@ -773,10 +801,14 @@ row — that a post-quantum verifier on Bitcoin waits on `OP_CAT` — was wrong;
 `OP_CAT` decides how *expensive* a hash-committed verifier is, not whether one
 is possible.
 
-The two differ in where the cost falls. FRI over Poseidon2 keeps a 31-bit field
-and needs no change of prover, but pays a few hundred multiplications per Merkle
-level. A module-lattice argument pays wider limbs and an NTT, but has no hash in
-the opening and the smallest proofs available. Neither has been written in
+The two differ in where the cost falls, and they are not symmetric. FRI over
+Poseidon2 verifies the proof Ziren already emits — a script-side problem only —
+and pays a few hundred multiplications per Merkle level. A module-lattice
+argument has no hash in the opening and the smallest proofs available, but
+reaches back into the prover: it needs either a lattice zkVM that does not
+exist, or a recursion layer wrapping Ziren's STARK that also does not exist.
+That asymmetry favours FRI on everything except the per-level hash, which is
+precisely why that one number decides it. Neither verifier has been written in
 Bitcoin script, so neither cost is known.
 
 What follows is a concrete piece of work rather than a wait: **count the
