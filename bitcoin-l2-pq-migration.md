@@ -2,9 +2,12 @@
 
 **A research report.** Compiled 2026-07-31, revised 2026-08-01, from primary
 sources: BIP text from
-`bitcoin/bips`, `UPGRADING.md` from `cosmos/cosmos-sdk`, the Ziren issue
-tracker, and the GOAT repositories and their dependency trees read through the
-GitHub API and local clones. Claims are stated as verified; checks
+[`bitcoin/bips`](https://github.com/bitcoin/bips),
+[`UPGRADING.md`](https://github.com/cosmos/cosmos-sdk/blob/main/UPGRADING.md)
+from [`cosmos/cosmos-sdk`](https://github.com/cosmos/cosmos-sdk), the
+[Ziren issue tracker](https://github.com/ProjectZKM/Ziren/issues), and the
+[GOAT repositories](https://github.com/GOATNetwork) and their dependency trees
+read through the GitHub API and local clones. Claims are stated as verified; checks
 still outstanding are listed under *Remaining open items*.
 
 ## Abstract
@@ -47,9 +50,12 @@ owned by separate parties.
 That composition produces a problem neither Bitcoin nor Ethereum has alone:
 
 - The L2 **cannot fix its own base layer.** Bitcoin has specified no
-  post-quantum signature scheme at all — BIP-360 (Draft) says in its own text
-  that it "does not include the introduction of post-quantum signature schemes",
-  and BIP-361 (Draft, Informational) lists `Requires: TBD Post Quantum Signature
+  post-quantum signature scheme at all —
+  [BIP-360](https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki)
+  (Draft) says in its own text that it "does not include the introduction of
+  post-quantum signature schemes", and
+  [BIP-361](https://github.com/bitcoin/bips/blob/master/bip-0361.mediawiki)
+  (Draft, Informational) lists `Requires: TBD Post Quantum Signature
   BIP`, a document that does not exist. Any BTC in a classical L1 output is on
   Bitcoin's timeline, not the L2's.
 - The L2 **usually borrows a consensus stack from a third ecosystem**, and
@@ -102,10 +108,11 @@ assumption.*
 
 ## 4. Bitcoin: an exposure problem, with the signature question deferred
 
-Two Draft BIPs sit in the canonical `bitcoin/bips` repository. Neither is
+Two Draft BIPs sit in the canonical
+[`bitcoin/bips`](https://github.com/bitcoin/bips) repository. Neither is
 activated.
 
-**BIP-360, "Pay-to-Merkle-Root" (P2MR)**, `Layer: Consensus (soft fork)`,
+**[BIP-360, "Pay-to-Merkle-Root" (P2MR)](https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki)**, `Layer: Consensus (soft fork)`,
 `Status: Draft`, v0.12.0, `Requires: 340, 341, 342`. It proposes an output type
 that is Taproot with the key-path spend removed, so no bare public key is ever
 committed on chain. The BIP is explicit about the limits of that: protection
@@ -115,7 +122,7 @@ short exposure quantum attacks". Most decisively for RQ1, the text states:
 "While this proposal does not include the introduction of post-quantum
 signature schemes" — the authors are "currently researching options".
 
-**BIP-361, "Post Quantum Migration and Legacy Signature Sunset"**,
+**[BIP-361, "Post Quantum Migration and Legacy Signature Sunset"](https://github.com/bitcoin/bips/blob/master/bip-0361.mediawiki)**,
 `Status: Draft`, `Type: Informational`, assigned 2026-02-11. It proposes a
 pre-announced sunset of legacy ECDSA/Schnorr, framing quantum security as "a
 private incentive". Its `Requires` field reads: **"TBD Post Quantum Signature
@@ -159,13 +166,17 @@ security, but at roughly 3 KB each they cannot go on chain one per validator.
 Ethereum therefore treats post-quantum migration substantially as an
 aggregation-engineering problem.
 
-The concrete artifacts are named and public. `leanEthereum/leanVM` describes
+The concrete artifacts are named and public.
+[`leanEthereum/leanVM`](https://github.com/leanEthereum/leanVM) describes
 itself as a "minimal hash-based zkVM, for a Post-Quantum Ethereum" and exists to
-do recursive aggregation. `leanEthereum/leanSig` is a Rust prototype of the
-proposed signature scheme, built on tweakable hash functions and incomparable
-encodings, and grew out of the research implementation `b-wagn/hash-sig`
-(eprint 2025/055). `leanSig`'s README is explicit that the code is unaudited and
-not for production. `pq.ethereum.org` is the coordination hub.
+do recursive aggregation.
+[`leanEthereum/leanSig`](https://github.com/leanEthereum/leanSig) is a Rust
+prototype of the proposed signature scheme, built on tweakable hash functions
+and incomparable encodings, and grew out of the research implementation
+[`b-wagn/hash-sig`](https://github.com/b-wagn/hash-sig)
+([eprint 2025/055](https://eprint.iacr.org/2025/055)). `leanSig`'s README is
+explicit that the code is unaudited and not for production.
+[`pq.ethereum.org`](https://pq.ethereum.org/) is the coordination hub.
 
 **That is only the consensus front.** Accounts have their own two-track story,
 and it is the half that concerns user funds:
@@ -197,12 +208,15 @@ precompile serves both scaling and the quantum transition. That is crypto-agilit
 designed in at the layer where Ethereum previously failed to have it.
 
 Nothing post-quantum has shipped to Ethereum mainnet on any of these fronts;
-EIP-7885, EIP-8141 and EIP-8151 are all Draft.
+EIP-7885, EIP-8141 and
+[EIP-8151](https://eips.ethereum.org/EIPS/eip-8151) are all Draft.
 
 ## 6. Cosmos: a negotiation problem, and the one that shipped
 
-Cosmos SDK **v0.55** registers ML-DSA-65 (FIPS 204) as a supported validator
-consensus key type. This is shipped code, not a proposal: the
+Cosmos SDK **v0.55** registers
+[ML-DSA-65 (FIPS 204)](https://docs.cosmos.network/sdk/latest/keys/post-quantum-keys)
+as a supported validator consensus key type. This is shipped code, not a
+proposal ([PR #26436](https://github.com/cosmos/cosmos-sdk/pull/26436)): the
 `cosmos.crypto.mldsa65` proto package is in the tree, Amino routes and the
 `hd.MlDsa65Type` constant are enabled by default, `x/auth` gained a
 `SigVerifyCostMlDsa65` parameter, and `init`/`testnet` accept
@@ -232,8 +246,9 @@ type. Post-quantum migration in an interoperable ecosystem is therefore a
 is silent until connectivity breaks.
 
 **And the cost is linear, because CometBFT does not aggregate.** The word
-*per-validator* in that parameter name is the whole story. A commit carries one
-signature for each validator that voted:
+*per-validator* in that parameter name is the whole story. A commit
+([`types/block.go`](https://github.com/cometbft/cometbft/blob/main/types/block.go))
+carries one signature for each validator that voted:
 
 ```go
 type Commit struct {
@@ -267,8 +282,9 @@ var MaxSignatureSize = cmtmath.MaxInt(
 
 so admitting ML-DSA-65 to the key-type set raises it from 96 to 3309 bytes
 globally. `MaxCommitSigBytes` then adds the address, flag, timestamp and proto
-framing on top of that, and `DefaultBlockParams` budgets the worst-case commit
-*separately from application data*:
+framing on top of that, and
+[`DefaultBlockParams`](https://github.com/cometbft/cometbft/blob/main/types/params.go)
+budgets the worst-case commit *separately from application data*:
 
 ```go
 // MaxBytes budgets 21MiB for data plus the worst-case commit for a
@@ -291,7 +307,8 @@ on a CometBFT carrying `mldsa65` inherits the larger default block size whether
 or not its validators ever use a post-quantum key. The cost of the option is
 paid by everyone; only the per-commit bytes are paid by adopters.
 
-`UPGRADING.md` does not mention aggregation anywhere, and the upstream work to
+[`UPGRADING.md`](https://github.com/cosmos/cosmos-sdk/blob/main/UPGRADING.md)
+does not mention aggregation anywhere, and the upstream work to
 add it has not landed: CometBFT issue
 [#3455](https://github.com/cometbft/cometbft/issues/3455) (BLS signature
 aggregation) has been open since 2024, issue
@@ -347,12 +364,12 @@ that the case study and the framework can be read against each other.
 | Row | Surface | Repo | Scheme | Quantum status | Owner of the fix |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Bitcoin L1 outputs | — | secp256k1 / Schnorr | broken by Shor | **Bitcoin, not GOAT** |
-| 1–2 | Peg custody | `bitvm2-node` | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
-| 2 | Bridge attestation | `goat` `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
-| 3 | Bridge proof system | `bitvm2-node` | Ziren STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT and ZKM** |
-| 4 | Bridge bit commitments | `bitvm2-node` → BitVM | **Winternitz OTS** | **already PQ-safe** | — |
-| 5 | Consensus keys | `goat` (CometBFT) | **secp256k1** | broken by Shor | **GOAT** |
-| 6 | EVM accounts | `goat-geth` | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
+| 1–2 | Peg custody | [`bitvm2-node`](https://github.com/GOATNetwork/bitvm2-node) | MuSig2 over a **Taproot key path** | broken by Shor, **and exposed from output creation** | **GOAT** |
+| 2 | Bridge attestation | [`goat`](https://github.com/GOATNetwork/goat) `x/relayer` | secp256k1 / Schnorr | broken by Shor | **GOAT** |
+| 3 | Bridge proof system | [`bitvm2-node`](https://github.com/GOATNetwork/bitvm2-node) | [Ziren](https://github.com/ProjectZKM/Ziren) STARK (**DLOG multiset memory check**) → **Groth16/BN254** wrap → garbled | broken at three layers | **GOAT and ZKM** |
+| 4 | Bridge bit commitments | [`bitvm2-node`](https://github.com/GOATNetwork/bitvm2-node) → [BitVM](https://github.com/GOATNetwork/BitVM) | **Winternitz OTS** | **already PQ-safe** | — |
+| 5 | Consensus keys | [`goat`](https://github.com/GOATNetwork/goat) (CometBFT) | **secp256k1** | broken by Shor | **GOAT** |
+| 6 | EVM accounts | [`goat-geth`](https://github.com/GOATNetwork/goat-geth) | secp256k1 ECDSA | broken by Shor | GOAT, at tooling cost |
 
 Peg custody spans two rows: the output is an L1 settlement output, but its
 *construction* is GOAT's choice, which is what makes the mitigation in section 11
@@ -364,7 +381,7 @@ rewrite into two contained swaps.
 
 ## 9. bitvm2-node: the plumbing is hash-based, the content is not
 
-`bitvm2-node` is a Rust ZK bridge: crates for `bitcoin-light-client-circuit`,
+[`bitvm2-node`](https://github.com/GOATNetwork/bitvm2-node) is a Rust ZK bridge: crates for `bitcoin-light-client-circuit`,
 `header-chain`, `state-chain`, `commit-chain`, `bitvm2-ga`, with circuits for
 header-chain, state-chain, commit-chain and operator proofs. Its crypto
 dependencies are explicit in `Cargo.toml`:
@@ -390,20 +407,24 @@ over secp256k1, used for peg-out authorisation, is broken in the ordinary way.
 **What is already safe, and this is the useful part.** BitVM2 carries values
 between Bitcoin script fragments using *bit commitments* implemented as
 Winternitz one-time signatures — hash-based, and therefore post-quantum on the
-same conservative assumption as SLH-DSA. The BitVM tree contains
+same conservative assumption as SLH-DSA. The
+[BitVM](https://github.com/GOATNetwork/BitVM) tree contains
 `bitvm/src/signatures/winternitz.rs`, `winternitz_hash.rs`,
 `signing_winternitz.rs` and `wots_api.rs`, and `bitvm2-node` references them
 from `crates/bitvm2-ga/src/types.rs` and `crates/bitvm2-ga/src/operator/api.rs`.
 
 > **Verification note.** A GitHub *code search* for `winternitz` in
-> `GOATNetwork/BitVM` returns zero hits, which would suggest the opposite
+> [`GOATNetwork/BitVM`](https://github.com/GOATNetwork/BitVM) returns zero hits,
+> which would suggest the opposite
 > conclusion. That is an artifact: GitHub code search does not index forks, and
-> `GOATNetwork/BitVM` is a fork of `BitVM/BitVM`. Listing the git tree directly
+> `GOATNetwork/BitVM` is a fork of
+> [`BitVM/BitVM`](https://github.com/BitVM/BitVM). Listing the git tree directly
 > shows the files. Any audit relying on code search over this stack will
 > silently under-report.
 
 **Groth16 is a wrapper, not the proving system.** `bitvm2-node` depends on
-Ziren (`zkm-prover`, `zkm-verifier`, `zkm-sdk`, `zkm-zkvm`, and four more
+[Ziren](https://github.com/ProjectZKM/Ziren) (`zkm-prover`, `zkm-verifier`,
+`zkm-sdk`, `zkm-zkvm`, and four more
 crates), and Ziren is a FRI/STARK zkVM — its whitepaper mentions FRI 31 times
 and STARK 19, over Poseidon and a small prime field. Occurrence counts in
 `bitvm2-node` are consistent with the standard pattern: `zkm` 93, `wrap` 87,
@@ -465,7 +486,7 @@ layers, not one:
 | Layer | Primitive | Quantum status | Where the fix lives |
 | --- | --- | --- | --- |
 | Ziren FRI / Poseidon commitment | hash-based | safe | — |
-| Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | ZKM, Ziren #276 — **prototype exists** (`feat/lthash`) |
+| Ziren multiset memory check | **hash-to-curve (ECMH), DLOG** | **broken** | ZKM, [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) — **prototype exists** ([`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash)) |
 | Groth16 wrap | **BN254 pairing** | **broken** | GOAT |
 | `bitvm2-gc` garbled verifier | AES-128 garbling of a **Groth16 verifier** | garbling safe, **statement broken** | GOAT, and it is a rebuild |
 | WOTS commitment into script | hash-based | safe | — |
@@ -581,7 +602,9 @@ available immediately, and it closes the easier of the two attacks.
 
 This is where the best return is.
 
-**Relayer attestation keys** (`x/relayer/types/pubkey.go`) are the bridge trust
+**Relayer attestation keys**
+([`x/relayer/types/pubkey.go`](https://github.com/GOATNetwork/goat/blob/main/x/relayer/types/pubkey.go))
+are the bridge trust
 root, held as a protobuf `oneof` over `Secp256K1 | Schnorr`. The `oneof` is an
 extensibility point, so adding an ML-DSA-65 variant extends an existing pattern.
 The blocker is a fixed-length gate in `VerifySign`:
@@ -606,7 +629,8 @@ shipping in the same release. GOAT runs SDK **v0.53.8** via a fork
 bump — the rebase is the critical path.
 
 GOAT's validators sign with **secp256k1**, not the Cosmos default of ed25519.
-`cmd/goatd/cmd/modgen/init.go` sets
+[`cmd/goatd/cmd/modgen/init.go`](https://github.com/GOATNetwork/goat/blob/main/cmd/goatd/cmd/modgen/init.go)
+sets
 `consensusParam.Validator.PubKeyTypes = []string{cmttypes.ABCIPubKeyTypeSecp256k1}`,
 and the mainnet genesis agrees: `"pub_key_types": ["secp256k1"]`. This changes
 nothing about the exposure, since both fall to Shor, but it does mean the
@@ -635,7 +659,10 @@ else. The work is a dependency upgrade and a block-parameter re-tune.
 
 **The relayer vote key is the opposite case, and the distinction is easy to
 miss.** Its aggregation is not inherited from Cosmos — it is GOAT's own code,
-`pkg/crypto/blst.go` called from `x/relayer/keeper/proposal.go:66`. Upstream has
+[`pkg/crypto/blst.go`](https://github.com/GOATNetwork/goat/blob/main/pkg/crypto/blst.go)
+called from
+[`x/relayer/keeper/proposal.go:66`](https://github.com/GOATNetwork/goat/blob/main/x/relayer/keeper/proposal.go#L66).
+Upstream has
 no aggregation to extend, and the attempts to add it have not landed, so no
 amount of tracking Cosmos releases produces an answer for this surface. It is
 GOAT's alone, and it is the one place in this stack where the post-quantum move
@@ -667,7 +694,8 @@ N, at 3309 bytes each. For twenty relayers that is roughly 66 KB where there was
 
 **Aggregation is confirmed in use, not merely available.** The presence of an
 aggregate API is weaker evidence than it appears; what settles it is the call
-site, `x/relayer/keeper/proposal.go:66`:
+site,
+[`x/relayer/keeper/proposal.go:66`](https://github.com/GOATNetwork/goat/blob/main/x/relayer/keeper/proposal.go#L66):
 
 ```go
 sigdoc := types.VoteSignDoc(req.MethodName(), sdkctx.ChainID(),
@@ -782,7 +810,9 @@ adopting ML-DSA.
 
 ## 14. goat-geth: the divergence, measured
 
-Comparing `GOATNetwork:goat-geth:dev` against `ethereum/go-ethereum:master`:
+Comparing
+[`GOATNetwork:goat-geth:dev`](https://github.com/GOATNetwork/goat-geth) against
+[`ethereum/go-ethereum:master`](https://github.com/ethereum/go-ethereum):
 
 ```
 status = diverged
@@ -802,16 +832,17 @@ grow.
 
 Treating this surface as "accounts use ECDSA, follow Ethereum" understates it
 badly. The EVM exposes elliptic-curve and pairing operations as *consensus-level
-precompiles*, and `core/vm/contracts.go` in `goat-geth` carries the full upstream
-set:
+precompiles*, and
+[`core/vm/contracts.go`](https://github.com/GOATNetwork/goat-geth/blob/dev/core/vm/contracts.go)
+in `goat-geth` carries the full upstream set:
 
 | Address / type | Primitive | Quantum status |
 | --- | --- | --- |
 | `0x01` `ecrecover` | secp256k1 ECDSA | **broken** |
 | `0x06`–`0x08` `bn256Add`, `bn256ScalarMul`, `bn256Pairing` | BN254 group ops and **pairing** | **broken** |
 | `0x0a` `kzgPointEvaluation` | KZG over BLS12-381 | **broken** |
-| `bls12381G1Add/G2Add/MultiExp/Pairing/MapG1/MapG2` | BLS12-381 (EIP-2537) | **broken** |
-| `p256Verify` | secp256r1 ECDSA (RIP-7212) | **broken** |
+| `bls12381G1Add/G2Add/MultiExp/Pairing/MapG1/MapG2` | BLS12-381 ([EIP-2537](https://eips.ethereum.org/EIPS/eip-2537)) | **broken** |
+| `p256Verify` | secp256r1 ECDSA ([RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md)) | **broken** |
 | `0x02`, `0x03`, `0x04`, `0x05`, `0x09` | SHA-256, RIPEMD-160, identity, modexp, BLAKE2F | safe |
 
 Three curve families and two pairing engines, all consensus-critical.
@@ -823,11 +854,15 @@ the contracts calling it are immutable bytecode that in general nobody has the
 authority to upgrade.
 
 Ethereum's own work shows the one lever that does exist, and it is narrower than
-"remove the precompile". **EIP-8151** ("Account Code Restricted ecRecover",
+"remove the precompile".
+**[EIP-8151](https://eips.ethereum.org/EIPS/eip-8151)** ("Account Code
+Restricted ecRecover",
 Draft, created 2026-02-09) does not delete `ecRecover`; it *narrows* it, keyed on
 state the protocol already controls. The attack it closes is instructive: an EOA
-that migrates to post-quantum authorization via EIP-7702 has its ECDSA
-*transaction* authority disabled by EIP-3607 (Final), but `ecRecover` ignores
+that migrates to post-quantum authorization via
+[EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) has its ECDSA
+*transaction* authority disabled by
+[EIP-3607](https://eips.ethereum.org/EIPS/eip-3607) (Final), but `ecRecover` ignores
 account state — so a quantum attacker holding the derived ECDSA key could still
 authorize transfers through **immutable contracts**, notably ERC-20 `permit`
 implementations. EIP-8151 makes `ecRecover` return zero when the account has
@@ -959,7 +994,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 0 | Inventory every signature and proof verification path; add tests asserting no fixed signature-length assumptions | The `VerifySign` 64-byte gate shows these assumptions are load-bearing and invisible |
 | 1 | Relayer: add ML-DSA-65 to the `PublicKey` `oneof`, make length checks per-variant, roll out with dual attestation | Highest value per unit of control; the `oneof` already supports it; dual signing gives rollback at every step |
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
-| 3 | Track and support Ziren #276 / `feat/lthash` through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement |
+| 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement |
 | 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap |
 | 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. Cheaper than previously assessed |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
