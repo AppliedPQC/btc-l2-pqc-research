@@ -682,67 +682,133 @@ statement, and section 8's conclusion still stands: `bitvm2-gc` is
 Groth16-oriented by construction, so moving off pairings is a rebuild of that
 component rather than a swap of a wrapper.
 
-### What would replace it on chain
+### Remove the EC based proof verifier
 
 The report says to remove the Groth16 verifier; it owes an answer to what takes
 its place. The answer starts from a fact the whole BitVM line exists to work
 around: **Bitcoin cannot verify a Groth16 proof.** Script has no pairing
-operation and no way to add one, so every design in the table above is a way of
-*avoiding* on-chain verification — emulate the verifier in script and pay
-several hundred KB for a Disprove (BitVM2), garble it and move it off chain
-(BitVM3), or witness-encrypt against it so the chain only sees a hashlock
-(BABE). The elaborate machinery is a consequence of the pairing, not of the
-proof system's difficulty.
+operation and no way to add one, so every design in the table above *avoids*
+on-chain verification rather than performing it — emulate the verifier in script
+and pay several hundred KB for a Disprove (BitVM2), garble it and move it off
+chain (BitVM3), or witness-encrypt against it so the chain sees only a hashlock
+(BABE). The machinery is a consequence of the pairing, not of the proof system.
 
-That reframes the migration. The goal is not to find a post-quantum proof small
-enough to fit the hole Groth16 leaves. It is to **stop needing the hole** — to
-put a proof on Bitcoin that Bitcoin can actually check.
+So the goal is not a post-quantum proof small enough to fit the hole Groth16
+leaves. It is to **stop needing the hole**: put a proof on Bitcoin that Bitcoin
+can check.
 
-**A hash-based proof is the one Bitcoin is suited to.** A FRI verifier is
-Merkle-path checking and a Fiat–Shamir transcript, which is to say hashing, and
-hashing is what script does natively in a single opcode. The costly primitive in
-Bitcoin script is algebraic, and a hash-based argument is the family that needs
-the least of it. On this axis the post-quantum choice is not a concession; it is
-the better fit.
+**One constraint decides which schemes qualify.** Bitcoin script hashes in a
+single opcode, but its arithmetic opcodes take operands of at most **four
+bytes** — `nDefaultMaxNumSize{4}` in Bitcoin Core's
+[`script.h`](https://github.com/bitcoin/bitcoin/blob/master/src/script/script.h).
+Anything wider must be emulated limb by limb, and that emulation is exactly what
+makes a BN254 pairing unaffordable. A verifier is therefore cheap on Bitcoin in
+proportion to how much of it is hashing over a field that fits in 31 bits, and
+expensive in proportion to how much is big-modulus algebra.
 
-The work exists.
+#### FRI
+
+FRI fits the constraint almost exactly. Its verifier is Merkle-path checking and
+a Fiat-Shamir transcript — hashing — plus a few field operations per query, and
+the fields it is used with are 31-bit primes that fit a script number natively.
+
+It is also already implemented.
 [`Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
-implements a Circle STARK verifier in Bitcoin script as reusable components —
-M31/CM31/QM31 field arithmetic, the Fiat–Shamir transcript, proof-of-work
+provides a Circle STARK verifier in Bitcoin script as reusable components —
+M31/CM31/QM31 field arithmetic, the Fiat-Shamir transcript, proof-of-work
 checking, FRI low-degree testing, and Merkle path verification — and was still
-being pushed to in May 2026.
+being pushed to in May 2026. And it needs no change of prover: Ziren is already
+a FRI zkVM (section 8).
 
-**The blocker is a soft fork, not cryptography.** Those components are built on
-`OP_CAT` together with `OP_SHA256`, and Bitcoin does not have `OP_CAT`.
+Two things stand between that and a working bridge.
+
+**`OP_CAT`, which Bitcoin does not have.** Those components are built on
+`OP_CAT` with `OP_SHA256`, because concatenation is what a Merkle path and a
+transcript need.
 [BIP-347](https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki)
 ("OP_CAT in Tapscript", Heilman and Sabouri, `Layer: Consensus (soft fork)`)
-re-enables it by redefining `OP_SUCCESS126`; its status is `Complete`, meaning
-the specification is finished, not that it is deployed. Concatenation is what a
-Merkle path and a transcript need, and without it the verifier cannot be
-expressed.
+re-enables it by redefining `OP_SUCCESS126`. Its status is `Complete`, which
+means the specification is finished, not that it is deployed. This row therefore
+lands where section 4 lands on signatures: **the L2 does not own the fix.**
 
-So the honest position on this row is the same one section 4 reaches about
-signatures: **the L2 does not own the fix.** With `OP_CAT`, verifying a
-post-quantum proof directly on Bitcoin becomes the simplest design in this
-section rather than the hardest — no garbling, no cut-and-choose, no witness
-encryption, and no pairing to be broken. Without it, the L2 is choosing among
-ways to avoid on-chain verification, and every one of them currently avoids
-verifying something pairing-based.
+**A field mismatch that is the L2's to close.** The two sides are not the same
+FRI. `Cargo.lock` on `feat/goat-bitvm3` pins Ziren against `p3-koala-bear`, so
+its proofs are over **KoalaBear**; `bitcoin-circle-stark` is **Mersenne-31**,
+and the circle construction exists precisely because M31 has no large smooth
+subgroup for ordinary FFT. Both are 31-bit and both fit a script number, so the
+transcript, Merkle and FRI components carry over — but the field arithmetic
+layer does not, and one side has to move. That is engineering with a known
+shape, not research.
 
-**If the wrap has to stay, the wrap is what changes.** Where a compressor is
-still needed — because the execution proof is too large to post — lattice-based
-succinct arguments are the post-quantum family with the smallest proofs:
-[LaBRADOR](https://eprint.iacr.org/2022/1341) (Beullens and Seiler) reports
-**58 KB** for R1CS with 2²⁰ constraints, claiming proofs "an order of magnitude
-more compact than previous quantum-safe proofs";
-[SALSAA](https://eprint.iacr.org/2025/2124) reports **73 KB and 2.28 ms
-verification** for a 2²⁸-element witness;
-[RoKoko](https://eprint.iacr.org/2026/575) reports roughly 200 KB with markedly
-faster verification than [Greyhound](https://eprint.iacr.org/2024/1293). None
-has a garbled-verifier implementation to build on, and a small *proof* does not
-imply a small *verifier circuit* — the circuit is what BitVM garbles, and that
-number is not in these papers. It would have to be established before the
-comparison in phase 4 of section 14 means anything.
+#### Basefold
+
+[Basefold](https://eprint.iacr.org/2023/1705) (Zeilberger, Chen and Fisch)
+generalises the FRI IOPP to any foldable linear code, giving a field-agnostic
+multilinear PCS with *O*(log²*n*) verifier cost, and it is faster than FRI-based
+multilinear constructions over the same field.
+
+For this target it is the wrong tool, for two reasons that both follow from the
+four-byte rule.
+
+Its headline advantage is **field-agnosticism** — not needing an FFT-friendly
+smooth-order field. On Bitcoin that is a non-benefit: the 31-bit FFT-friendly
+field is not a constraint to escape, it is the only reason the arithmetic is
+affordable at all. Basefold buys freedom the script does not want.
+
+And it pays for that freedom in the resource script is poorest in. Basefold
+interleaves its IOPP with a **sumcheck**, so the verifier evaluates a low-degree
+polynomial per round on top of the Merkle work. That is more field arithmetic
+than FRI's folding check, and *O*(log²*n*) rather than FRI's query-linear
+hashing. In a setting where hashing is one opcode and arithmetic is emulated,
+shifting work from hashing to arithmetic is the wrong direction. No
+Bitcoin-script implementation of it exists.
+
+#### Lattice arguments, and whether Bitcoin would need an NTT
+
+The lattice family — [LaBRADOR](https://eprint.iacr.org/2022/1341),
+[RoKoko](https://eprint.iacr.org/2026/575),
+[SALSAA](https://eprint.iacr.org/2025/2124),
+[Greyhound](https://eprint.iacr.org/2024/1293) — has the smallest post-quantum
+proofs: LaBRADOR reports **58 KB** for R1CS with 2²⁰ constraints, SALSAA **73 KB
+and 2.28 ms** verification for a 2²⁸-element witness, RoKoko roughly **200 KB**.
+On proof size alone it is the strongest family here.
+
+Verifying one on Bitcoin is a different question, and the answer is yes: it
+would mean implementing polynomial ring arithmetic, and an NTT to make it
+tractable. These schemes work over rings of the form Z*q*[X]/(X^*d*+1), where
+verification is ring multiplication and norm checking, and ring multiplication
+without an NTT is quadratic in the degree.
+
+That is the wrong side of the four-byte rule. LaBRADOR's own reported instance
+is R1CS **mod 2⁶⁴+1** — a modulus twice the width of a script number, so every
+coefficient operation becomes multi-limb emulation, inside an NTT, inside a
+verifier. RoKoko's abstract does not state its parameters, so its modulus would
+have to be established rather than assumed, but the family sits in the same
+range.
+
+This is the same cost structure that makes a BN254 pairing unverifiable, in a
+different algebra. Trading a pairing for a 64-bit-modulus NTT does remove the
+quantum exposure, but it does not remove the reason the verifier had to leave
+the chain — so the bridge would still need garbling or witness encryption to
+carry it, and would have gained no simplicity for the work.
+
+Lattice proofs remain the right answer where the constraint is *proof size on
+the wire* rather than verification in script — a compressor for something posted
+but not checked by consensus. They are not the way to put a verifier on Bitcoin.
+
+#### Which to use
+
+**FRI.** It is the only one of the three whose verifier is mostly hashing over a
+field that fits Bitcoin's arithmetic, it has a Bitcoin-script implementation to
+build on, and Ziren already produces the proofs. Basefold's advantage does not
+apply here and its sumcheck costs the wrong resource; lattice arguments would
+require an NTT over a 64-bit modulus in script, which reproduces the problem
+being escaped.
+
+The dependency order that follows is worth stating plainly: `OP_CAT` decides
+whether this is possible at all and is Bitcoin's to schedule; the
+KoalaBear-versus-M31 question decides how much work it is and is GOAT and ZKM's
+to settle; and both can be prepared for before either is resolved.
 
 ### Verdict
 
@@ -1331,7 +1397,9 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - NIST, *Multi-Party Threshold Cryptography* (IR 8214C, final 2026-01-20) — <https://csrc.nist.gov/projects/threshold-cryptography>
 - W. Beullens, G. Seiler, *LaBRADOR: Compact Proofs for R1CS from Module-SIS* — <https://eprint.iacr.org/2022/1341>
 - *SALSAA — Sumcheck-Aided Lattice-based Succinct Arguments and Applications* — <https://eprint.iacr.org/2025/2124>
-- *RoKoko: Lattice-based Succinct Arguments, a Committed Refinement* — <https://eprint.iacr.org/2026/575>
+- M. Klooss, R. W. F. Lai, N. K. Nguyen, M. Osadnik, L. Tucci, *RoKoko: Lattice-based Succinct Arguments, a Committed Refinement* — <https://eprint.iacr.org/2026/575>
+- H. Zeilberger, B. Chen, B. Fisch, *BaseFold: Efficient Field-Agnostic Polynomial Commitment Schemes from Foldable Codes*, CRYPTO 2024 — <https://eprint.iacr.org/2023/1705>
+- Bitcoin Core, `src/script/script.h` (`CScriptNum::nDefaultMaxNumSize`, the four-byte arithmetic operand limit) — <https://github.com/bitcoin/bitcoin/blob/master/src/script/script.h>
 - *Greyhound: Fast Polynomial Commitments from Lattices* — <https://eprint.iacr.org/2024/1293>
 - BIP-347, *OP_CAT in Tapscript* (E. Heilman, A. Sabouri; Consensus soft fork, Complete, not activated) — <https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki>
 - `Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`, a Circle STARK verifier in Bitcoin script — <https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark>
