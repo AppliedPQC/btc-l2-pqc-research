@@ -28,25 +28,24 @@ independent grounding they do not have.
 4. [Bitcoin: an exposure problem, with the signature question deferred](bitcoin-l2-pq-migration.md#4-bitcoin-an-exposure-problem-with-the-signature-question-deferred) — BIP-360, BIP-361, and the sunset's rescue protocol
 5. [Ethereum: an aggregation problem at consensus, an account problem above it](bitcoin-l2-pq-migration.md#5-ethereum-an-aggregation-problem-at-consensus-an-account-problem-above-it) — `leanVM`, `leanSig`, EIP-7702/8141/7885
 6. [Cosmos: a negotiation problem, and the one that shipped](bitcoin-l2-pq-migration.md#6-cosmos-a-negotiation-problem-and-the-one-that-shipped) — ML-DSA-65 in SDK v0.55, the IBC hazard, and why commits scale linearly
-7. [One technique both chains converged on](bitcoin-l2-pq-migration.md#7-one-technique-both-chains-converged-on) — prove knowledge of a secret the attacker cannot derive, verify with a STARK
 
 **[Part III — The evidence: the GOAT stack](bitcoin-l2-pq-migration.md#part-iii--the-evidence-the-goat-stack)**
 
-8. [Summary of findings](bitcoin-l2-pq-migration.md#8-summary-of-findings) — six of seven surfaces carry quantum-exposed cryptography
-9. [`bitvm2-node`: the plumbing is hash-based, the content is not](bitcoin-l2-pq-migration.md#9-bitvm2-node-the-plumbing-is-hash-based-the-content-is-not) — Winternitz commitments carrying a Groth16 proof, and Ziren's DLOG memory check
-10. [The on-chain Groth16 verifier: script, garbling, witness encryption](bitcoin-l2-pq-migration.md#10-the-on-chain-groth16-verifier-script-garbling-witness-encryption) — four designs, one unchanged BN254 assumption, stated in BABE's own security theorem
-11. [The peg's weakest quantum link is the Taproot key path](bitcoin-l2-pq-migration.md#11-the-pegs-weakest-quantum-link-is-the-taproot-key-path) — and the NUMS mitigation available today
-12. [`goat`: relayer and consensus](bitcoin-l2-pq-migration.md#12-goat-relayer-and-consensus) — the 64-byte gate in `VerifySign`, and the SDK upgrade path
-13. [The relayer's BLS vote key](bitcoin-l2-pq-migration.md#13-the-relayers-bls-vote-key) — the hardest item, because its value is aggregation
-14. [`goat-geth`: the divergence, measured](bitcoin-l2-pq-migration.md#14-goat-geth-the-divergence-measured) — 377 commits behind, and the precompiles nobody can migrate
+7. [Summary of findings](bitcoin-l2-pq-migration.md#7-summary-of-findings) — six of seven surfaces carry quantum-exposed cryptography
+8. [`bitvm2-node`: the plumbing is hash-based, the content is not](bitcoin-l2-pq-migration.md#8-bitvm2-node-the-plumbing-is-hash-based-the-content-is-not) — Winternitz commitments carrying a Groth16 proof, and Ziren's DLOG memory check
+9. [The on-chain Groth16 verifier: script, garbling, witness encryption](bitcoin-l2-pq-migration.md#9-the-on-chain-groth16-verifier-script-garbling-witness-encryption) — four designs, one unchanged BN254 assumption, stated in BABE's own security theorem
+10. [The peg's weakest quantum link is the Taproot key path](bitcoin-l2-pq-migration.md#10-the-pegs-weakest-quantum-link-is-the-taproot-key-path) — and the NUMS mitigation available today
+11. [`goat`: relayer and consensus](bitcoin-l2-pq-migration.md#11-goat-relayer-and-consensus) — the 64-byte gate in `VerifySign`, and the SDK upgrade path
+12. [The relayer's BLS vote key](bitcoin-l2-pq-migration.md#12-the-relayers-bls-vote-key) — the hardest item, because its value is aggregation
+13. [`goat-geth`: the divergence, measured](bitcoin-l2-pq-migration.md#13-goat-geth-the-divergence-measured) — 377 commits behind, and the precompiles nobody can migrate
 
 **[Part IV — What to do](bitcoin-l2-pq-migration.md#part-iv--what-to-do)**
 
-15. [Ordering the work](bitcoin-l2-pq-migration.md#15-ordering-the-work) — by ownership and severity, with a seven-phase plan for GOAT
+14. [Ordering the work](bitcoin-l2-pq-migration.md#14-ordering-the-work) — by ownership and severity, with a seven-phase plan for GOAT
 
 **[Part V — Traps and open items](bitcoin-l2-pq-migration.md#part-v--traps-and-open-items)**
 
-16. [Recurring traps](bitcoin-l2-pq-migration.md#16-recurring-traps) — fixed-length checks, forks hiding blockers, and the wrapper trap in both directions
+15. [Recurring traps](bitcoin-l2-pq-migration.md#15-recurring-traps) — fixed-length checks, forks hiding blockers, and the wrapper trap in both directions
 
 Also: [Abstract](bitcoin-l2-pq-migration.md#abstract) ·
 [Remaining open items](bitcoin-l2-pq-migration.md#remaining-open-items) ·
