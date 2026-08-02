@@ -35,7 +35,7 @@ layers protect only what they carry.** In the stack examined, the Bitcoin-side
 commitment layer, the garbling layer, the FRI commitment and the witness
 encryption that replaces the on-chain verifier are all post-quantum, and the
 bridge is still not, because every one of them is wrapping or carrying an
-elliptic-curve assertion. Section 10 follows that pattern through four
+elliptic-curve assertion. Section 9 follows that pattern through four
 generations of the same component and finds it stated outright in the security
 proof of the newest one.
 
@@ -464,8 +464,7 @@ system therefore does not mean deleting a wrapper — it means rebuilding the
 garbled-circuit stack around a different verifier, which is the single largest
 item in this report.
 
-**Revised scope.** The proof path contains three independent Shor-vulnerable
-layers, not one:
+The proof path contains three independent Shor-vulnerable layers, not one:
 
 | Layer | Primitive | Quantum status | Where the fix lives |
 | --- | --- | --- | --- |
@@ -483,9 +482,9 @@ bridge has to address all of them, in dependency order: Ziren's memory check
 first, since a post-quantum wrapper over a DLOG-dependent execution proof buys
 nothing.
 
-The last row is the newest and the least obvious, and it is treated on its own
-in section 9, because the on-chain verifier has been through four designs and
-they are best read as one topic.
+The last row is the least obvious, and it is treated on its own in section 9,
+because the on-chain verifier has been through four designs and they are best
+read as one topic.
 
 The cost is size and script weight. Hash-based proofs are substantially larger
 than Groth16's constant-size proof, and BitVM2's economics depend on what fits
@@ -606,7 +605,7 @@ terms, three of the four on-chain primitives really are post-quantum, and the
 security proof is a clean reduction. The pairing survives in the *relation being
 encrypted against*, which is the one place the vocabulary never points.
 
-### The new finding: Ziren moves onto the dispute path
+### Ziren sits on the dispute path
 
 Deferred Binding needs *soldering* — translating garbled labels across
 cut-and-choose instances — and proves it in a zkVM. The
@@ -685,14 +684,13 @@ component rather than a swap of a wrapper.
 
 ### Verdict
 
-**Net effect on the post-quantum position: none — but the exposure changed
-shape.** The earlier reading of this work as merely *orthogonal* to
-post-quantum was too generous. Three things are now true that were not before:
-the pairing assumption has moved from a script the bridge could in principle
-replace into the security theorem of the scheme that replaces it; Ziren's
-discrete-log dependency has acquired a second load-bearing position on the
-dispute path; and the AES-128 garbling parameter has moved from an optimisation
-detail to the gate on the payout secret.
+**Net effect on the post-quantum position: none.** It is not neutral either.
+Three things are true of it: the pairing assumption lives in the security
+theorem of the scheme that replaces the on-chain verifier, not merely in a
+script the bridge could swap out; Ziren's discrete-log dependency is
+load-bearing in two places, the proving pipeline and the dispute path; and the
+AES-128 garbling parameter gates the payout secret rather than sitting as an
+optimisation detail.
 
 None of this is an argument against BABE. It is an excellent answer to the
 question it was asked — on-chain cost — and the on-chain surface it produces is
@@ -819,7 +817,7 @@ Worth confirming against deployment reality rather than `go.mod` alone.
 
 ## 12. The relayer's BLS vote key
 
-Section 12's recommendation addresses the attestation key. That is not the whole
+Section 11's recommendation addresses the attestation key. That is not the whole
 picture, because the relayer carries **three** distinct key types, not one:
 
 | Key | Scheme | Purpose |
@@ -1141,7 +1139,7 @@ contract that cannot be upgraded can at least be known about before it matters.
 | 2 | Peg custody: evaluate NUMS-internal-key (script-path-only) Taproot outputs | Cheapest real gain, available today, no PQ scheme needed; closes the easiest attack |
 | 3 | Track and support [Ziren #276](https://github.com/ProjectZKM/Ziren/issues/276) / [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash) through to merge | Gates everything above it, and is the tractable layer: a primitive swap with a working 39-file prototype. Influence and test rather than implement. Now load-bearing twice, since BABE soldering also proves in Ziren (section 9) |
 | 4 | Re-target the proof pipeline and the `bitvm2-gc` garbling stack away from Groth16/BN254 | Largest item in this plan. `bitvm2-gc` is Groth16-verifier-oriented by construction, so this is a rebuild, not a wrapper swap. Sequence against the BABE work deliberately: BABE lowers the cost of *keeping* Groth16, and its witness encryption does not port to a hash-based verifier |
-| 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. Cheaper than previously assessed |
+| 5 | Upgrade `cosmos-sdk` v0.53.8 → ≥ v0.55; opt into `ml_dsa_65`; rotate validators; re-tune `block.max_bytes` and gossip limits | No SDK fork exists, so this is a dependency upgrade, not a rebase. A dependency upgrade, not a rebase |
 | 6 | Reduce `goat-geth`'s 377-commit lag; inventory callers of `0x06`–`0x08` and `0x0a`, and record for each whether it is **upgradeable** | The lag is the delivery channel for EIP-7885 and EIP-8151 when they land. The inventory's key column is upgradeability, not existence: an upgradeable verifier is tractable whatever upstream does, an immutable one has a deadline that cannot move |
 | — | Peg: minimise Bitcoin-side key exposure; keep custody policy migratable | Blocked on Bitcoin, which by BIP-360's own text has no PQ signature scheme |
 
@@ -1202,7 +1200,7 @@ Collected from the analysis so far; each cost real effort to notice.
   A scheme built from witness encryption, garbled circuits, hashlocks and
   Lamport commitments can still reduce to elliptic-curve discrete log, because
   the pairing survives in the *relation being encrypted against* rather than in
-  any named primitive. Section 10's case states it in the proof itself: the
+  any named primitive. Section 9's case states it in the proof itself: the
   advantage bound carries an explicit `Adv^DLog` term. When a design claims to
   remove an on-chain verifier, ask what the ciphertext is keyed to.
 - **Symmetric-primitive layers are not automatically "post-quantum done".**
