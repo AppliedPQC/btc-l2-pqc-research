@@ -743,15 +743,25 @@ So a FRI verifier — Merkle paths, transcript, folding check — is field
 arithmetic over a 31-bit prime, which fits a script number directly. No
 multi-limb representation and no soft fork.
 
-The cost is the hash. A width-16 Poseidon2 permutation with an x³ S-box runs
-8×16 + 13 S-boxes at two multiplications each, plus the internal diagonal layer:
-on the order of 280 general multiplications and 200 by constants.
-[`rust-bitcoin-m31`](https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31)
-measures 31-bit field multiplication in script at **1060 weight units** and
-multiplication by a constant at ~750, putting **one permutation near 450,000
-weight units** — above `MAX_STANDARD_TX_WEIGHT` (400,000), with one per Merkle
-level. That figure is derived from a round count and a measured primitive rather
-than measured end to end, and it is the number that most needs checking.
+The cost is the hash, and it has now been measured rather than estimated.
+[`bitcoin-poseidon2-script`](https://github.com/AppliedPQC/bitcoin-poseidon2-script)
+implements the permutation for Plonky3's width-16 KoalaBear instance and emits
+**867,595 bytes**, which in a taproot witness is the same number of weight
+units. `MAX_STANDARD_TX_WEIGHT` is 400,000, so **one permutation is 2.17
+standard transactions**, or 21.7% of a block — and a Merkle path costs one per
+level. The S-box dominates: a field multiplication is 1,805 bytes, `x³` is
+3,612, and the permutation performs 148 of them.
+
+An earlier draft of this section put the figure near 450,000 by multiplying a
+round count against a published primitive cost. The measurement is 1.9× that,
+which is the reason for building it rather than estimating it.
+
+The number is a starting point rather than a floor. Three things in that
+implementation are known to be loose: the internal linear layer is emitted as a
+dense 16×16 matrix where it is structurally one sum and sixteen scalings, and it
+runs twenty times per permutation; multiplication is plain double-and-add where
+`rust-bitcoin-m31` reaches 1,060 weight units with a windowed table; and squaring
+uses the general multiplier. None of that changes the order of magnitude.
 
 This is also why
 [`bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
