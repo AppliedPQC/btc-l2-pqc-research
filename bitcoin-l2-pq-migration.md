@@ -335,21 +335,33 @@ type. Post-quantum migration in an interoperable ecosystem is therefore a
 *coordination* problem before it is a cryptographic one — and the failure mode
 is silent until connectivity breaks.
 
-## 7. One technique both chains converged on
+## 7. One shape Bitcoin and Ethereum arrived at separately
 
-The two base layers face different problems and have chosen different
-mechanisms, but on the question of *rescuing funds whose key is already
-exposed* they arrived independently at the same answer: **prove knowledge of a
-secret the quantum attacker cannot derive, and verify that proof with a STARK.**
+Cosmos does not appear here: it is migrating validator keys on a chain that can
+schedule its own upgrade, so it has no already-exposed funds to rescue. The
+question below is specific to the two chains that do.
+
+Bitcoin and Ethereum face different problems and have chosen different
+mechanisms, but on *rescuing funds whose key is already exposed* both designs
+have the same shape: **prove knowledge of a secret the quantum attacker cannot
+derive, and verify that proof with something hash-based.**
 
 Bitcoin's BIP-361 rescue protocol proves knowledge of a BIP-32 parent extended
 private key, which an attacker who recovered only the child key would not have.
 Ethereum's emergency hard fork proves knowledge of the hash preimage behind an
 address, which was never published. The asymmetry differs — a derivation path in
-one case, a preimage in the other — but the shape is identical, and in both
-cases the verifier is hash-based rather than a signature scheme.
+one case, a preimage in the other — but the shape is identical, and in neither
+case is the verifier a signature scheme.
 
-This is worth noting for two reasons. It is the strongest evidence in this
+The two are not equally settled, and the difference matters. Ethereum's proposal
+names the mechanism: a STARK proof of preimage knowledge. BIP-361 does not
+choose one — it points at ZK-STARK-based rescue protocols *and* at commit/reveal
+schemes, and its coverage is explicitly unresolved (section 4). So this is a
+convergence of shape, not yet of construction. Nor is there evidence either team
+reached it from the other; what can be checked is the artifacts, and the
+artifacts agree.
+
+It is worth noting for two reasons. It is the strongest evidence in this
 report that hash-based proof systems, not post-quantum signatures alone, are the
 migration primitive that matters. And it is a caution against reading the
 "different problems" thesis too strongly: the constraints diverge, and some

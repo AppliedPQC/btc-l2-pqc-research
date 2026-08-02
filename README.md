@@ -28,7 +28,7 @@ independent grounding they do not have.
 4. [Bitcoin: an exposure problem, with the signature question deferred](bitcoin-l2-pq-migration.md#4-bitcoin-an-exposure-problem-with-the-signature-question-deferred) — BIP-360, BIP-361, and the sunset's rescue protocol
 5. [Ethereum: an aggregation problem at consensus, an account problem above it](bitcoin-l2-pq-migration.md#5-ethereum-an-aggregation-problem-at-consensus-an-account-problem-above-it) — `leanVM`, `leanSig`, EIP-7702/8141/7885
 6. [Cosmos: a negotiation problem, and the one that shipped](bitcoin-l2-pq-migration.md#6-cosmos-a-negotiation-problem-and-the-one-that-shipped) — ML-DSA-65 in SDK v0.55, the IBC hazard, and why commits scale linearly
-7. [One technique both chains converged on](bitcoin-l2-pq-migration.md#7-one-technique-both-chains-converged-on) — prove knowledge of a secret the attacker cannot derive, verify with a STARK
+7. [One shape Bitcoin and Ethereum arrived at separately](bitcoin-l2-pq-migration.md#7-one-shape-bitcoin-and-ethereum-arrived-at-separately) — prove knowledge of a secret the attacker cannot derive, verify with something hash-based
 
 **[Part III — The evidence: the GOAT stack](bitcoin-l2-pq-migration.md#part-iii--the-evidence-the-goat-stack)**
 
