@@ -744,17 +744,19 @@ arithmetic over a 31-bit prime, which fits a script number directly. No
 multi-limb representation and no soft fork.
 
 The cost is the hash, and it has now been measured rather than estimated.
-[`bitcoin-poseidon2-script`](https://github.com/AppliedPQC/bitcoin-poseidon2-script)
-implements the permutation for Plonky3's width-16 KoalaBear instance and emits
-**867,595 bytes**, which in a taproot witness is the same number of weight
-units. `MAX_STANDARD_TX_WEIGHT` is 400,000, so **one permutation is 2.17
-standard transactions**, or 21.7% of a block — and a Merkle path costs one per
-level. The S-box dominates: a field multiplication is 1,805 bytes, `x³` is
-3,612, and the permutation performs 148 of them.
+[`bitcoin-stark-verifier`](https://github.com/AppliedPQC/bitcoin-stark-verifier)
+implements the permutation for [Plonky3](https://github.com/Plonky3/Plonky3)'s
+width-16 KoalaBear instance and emits **572,228 bytes**, which in a taproot
+witness is the same number of weight units. `MAX_STANDARD_TX_WEIGHT` is 400,000,
+so **one permutation is 1.43 standard transactions**, or 14.3% of a block — and a
+Merkle path costs one per level. The S-box dominates: a field multiplication is
+1,446 bytes, `x³` is two of them, and the permutation performs 148 cubings.
 
-An earlier draft of this section put the figure near 450,000 by multiplying a
-round count against a published primitive cost. The measurement is 1.9× that,
-which is the reason for building it rather than estimating it.
+The figure has moved twice, which is the argument for building rather than
+estimating. An early draft put it near 450,000 by multiplying a round count
+against a published primitive cost; the first measurement came in at 867,595;
+optimisation since has brought it to 572,228. Estimates were wrong in both
+directions, and only the code settled it.
 
 The number is a starting point rather than a floor. Three things in that
 implementation are known to be loose: the internal linear layer is emitted as a
@@ -762,6 +764,9 @@ dense 16×16 matrix where it is structurally one sum and sixteen scalings, and i
 runs twenty times per permutation; multiplication is plain double-and-add where
 `rust-bitcoin-m31` reaches 1,060 weight units with a windowed table; and squaring
 uses the general multiplier. None of that changes the order of magnitude.
+
+A Merkle *level* costs 572,252 bytes — the permutation plus 24 bytes of child
+ordering — so a depth-21 path is **12,017,292 bytes, three full blocks**.
 
 This is also why
 [`bitcoin-circle-stark`](https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark)
@@ -784,15 +789,21 @@ Two trades against FRI. The first is field width: a 64-bit modulus needs three
 though still cheaper than the nine-limb BN254 multiplication BitVM2 performs
 thousands of times, which is the evidence the class of work is affordable.
 
-The second is larger and is about the prover, not the script. **Ziren is a FRI
-zkVM.** Adopting a lattice argument means either replacing it — no
-module-lattice zkVM is in production — or keeping it and proving *inside* a
-lattice argument that its STARK verified. That second option is sound rather
-than circular: unlike the Groth16 and BABE cases earlier in this section, the
-wrapped statement is itself post-quantum, so the composition inherits a
-post-quantum assumption rather than laundering a broken one. It is not the
-wrapper trap. But it is a recursion layer that does not exist yet, on top of a
-verifier nobody has written.
+The second is about the prover, not the script. **Ziren commits with FRI**, so a
+lattice argument is a change to its polynomial commitment scheme: the commitment
+itself, the opening argument, and the recursion circuits that verify them. That
+is the diff, and it is a diff to a codebase already being changed in exactly this
+way — [`feat/lthash`](https://github.com/ProjectZKM/Ziren/tree/feat/lthash)
+swaps ECMH for a lattice multiset hash across 39 files, reaching into the core
+machine and the recursion circuits. The question is the scope of a prover
+upgrade, not whether one is available.
+
+Wrapping remains a fallback: proving inside a lattice argument that Ziren's STARK
+verified is sound rather than circular, because the wrapped statement is itself
+post-quantum — unlike the Groth16 and BABE cases earlier in this section, this
+composition inherits a post-quantum assumption rather than laundering a broken
+one. It is not the wrapper trap. But it costs a recursion layer that changing the
+commitment scheme does not.
 
 Against those, there is no per-level hash to pay, and proof sizes are the
 smallest of any post-quantum family: [LaBRADOR](https://eprint.iacr.org/2022/1341)
@@ -803,55 +814,54 @@ for a 2²⁸-element witness,
 Tucci) roughly **200 KB** with about 100× faster verification than
 [Greyhound](https://eprint.iacr.org/2024/1293).
 
-#### Which to use
-
 **Both are viable without a soft fork, and the choice is a measurement rather
-than a research question.** That is the finding. The earlier reading of this
-row — that a post-quantum verifier on Bitcoin waits on `OP_CAT` — was wrong;
-`OP_CAT` decides how *expensive* a hash-committed verifier is, not whether one
-is possible.
-
-The two differ in where the cost falls, and they are not symmetric. FRI over
-Poseidon2 verifies the proof Ziren already emits — a script-side problem only —
-and pays a few hundred multiplications per Merkle level. A module-lattice
-argument has no hash in the opening and the smallest proofs available, but
-reaches back into the prover: it needs either a lattice zkVM that does not
-exist, or a recursion layer wrapping Ziren's STARK that also does not exist.
-That asymmetry favours FRI on everything except the per-level hash, which is
-precisely why that one number decides it.
+than a research question.** `OP_CAT` decides how *expensive* a hash-committed
+verifier is, not whether one is possible. FRI over Poseidon2 verifies what Ziren
+already emits and pays a few hundred multiplications per Merkle level; a
+module-lattice argument has no per-level hash and the smallest proofs available,
+but changes Ziren's commitment scheme with it. Neither fits a single transaction,
+and neither needs to — BitVM already chunks a verifier across a disprove
+pattern — so the question is how many chunks each option costs.
 
 #### The FRI side is no longer an estimate
 
-That number has now been measured, by writing the verifier:
+The permutation cost above is one hash. What a bridge actually runs is a whole
+verifier, and that has now been built:
 [`bitcoin-stark-verifier`](https://github.com/AppliedPQC/bitcoin-stark-verifier)
-implements Poseidon2 over KoalaBear and a WHIR opening verifier in Bitcoin
-script, with **zero uses of `OP_CAT`** or any other disabled opcode. Its
-end-to-end test runs [Plonky3](https://github.com/Plonky3/Plonky3)'s real prover,
-checks the proof with Plonky3's own verifier, then re-derives the same claims in
-script and executes them — no hand-built vectors.
+adds a WHIR opening verifier on top of the Poseidon2 script, with **zero uses of
+`OP_CAT`** or any other disabled opcode. Its end-to-end test runs
+[Plonky3](https://github.com/Plonky3/Plonky3)'s real prover, checks the proof
+with Plonky3's own verifier, then re-derives the same claims in script and
+executes them — no hand-built vectors.
 
-| | script bytes |
-| --- | --- |
-| One 31-bit field multiplication | 1,446 |
-| One Poseidon2 permutation | 572,228 — about **396 multiplications** |
-| One Merkle level | 572,252 |
-| Merkle path, depth 21 | 12,017,292 |
+Composed at 100-bit security the script is about **135 MB**, or 34 full blocks.
+Three findings come out of it.
 
-The estimate above — *a few hundred multiplications per Merkle level* — was
-right. What it did not convey is the consequence.
+**Merkle work is 99.3% of the script.** Sumcheck rounds at 95,100 bytes each and
+the closing identity at 1,447 are rounding error against 26 query paths.
+Optimisation effort spent anywhere but hashing addresses 0.7% of the problem.
 
-**One Merkle level does not fit in a standard transaction.** At 572,252 bytes it
-is over `MAX_STANDARD_TX_WEIGHT` by 43%, and a depth-21 path is 12 MB, or three
-full blocks. So the answer to *how many chunks* is not a modest number for the
-FRI route: it is more than one chunk per hash, before any sumcheck or final
-evaluation is counted.
+**Multilinear evaluation is exponential in the variable count**, about
+23.9 KB × 2ⁿ — 740 KB at n = 5, 24 MB at n = 10, 783 MB at n = 15. It passes
+Merkle work at around twelve variables, so for a realistic witness it, not the
+query count, is the binding term.
 
-Two further findings change where optimisation effort should go. In a fully
-composed verifier at 100-bit security — roughly 135 MB — **Merkle work is 99.3%
-of the script**; sumcheck rounds at 95,100 bytes each and the closing identity at
-1,447 are rounding error. And multilinear evaluation is **exponential in the
-variable count**, about 23.9 KB × 2ⁿ, so it passes Merkle work at around twelve
-variables and becomes the binding term for any realistic witness.
+**The chunk count is large.** One Merkle level already exceeds
+`MAX_STANDARD_TX_WEIGHT` by 43%, so the FRI route needs more than one chunk per
+hash — a useful number, because chunking is how BitVM runs a verifier Bitcoin
+cannot execute at once.
+
+> **The disprove pattern, briefly.** The verifier is never run on chain in the
+> happy path. An operator posts a claim and a bond; the script is cut into
+> segments, each small enough for one transaction, and each segment's inputs and
+> outputs are committed with Winternitz signatures so the segments chain
+> together. If the claim is honest, nobody executes anything and the bond
+> returns. If it is not, a challenger finds the one segment whose output
+> contradicts its input and spends a **Disprove** transaction that runs *only
+> that segment*, taking the bond. So the on-chain cost is one segment, not the
+> whole verifier — but every segment must still be pre-signed and stored off
+> chain, which is why total size sets the setup cost and the number of segments
+> sets the challenge latency.
 
 The measurement is a lower bound, not a simulation of GOAT's pipeline: it
 verifies a WHIR opening and its sumcheck over a six-variable witness, not a zkVM
@@ -1440,8 +1450,9 @@ Honestly short, and none of them block the recommendations:
 
 ## References
 
-Primary sources. Verified live on 2026-07-31; the aggregation sources on
-2026-08-01.
+Primary sources, each verified live: the base-layer and GOAT sources on
+2026-07-31, the aggregation sources on 2026-08-01, and the script-cost sources on
+2026-08-02.
 
 - BIP-360, *Pay-to-Merkle-Root (P2MR)* — <https://github.com/bitcoin/bips/blob/master/bip-0360.mediawiki>
 - BIP-361, *Post Quantum Migration and Legacy Signature Sunset* — <https://github.com/bitcoin/bips/blob/master/bip-0361.mediawiki>
@@ -1450,13 +1461,20 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - Cosmos SDK PR #26436, ML-DSA-65 consensus keys — <https://github.com/cosmos/cosmos-sdk/pull/26436>
 - Cosmos docs, *Post-quantum keys* — <https://docs.cosmos.network/sdk/latest/keys/post-quantum-keys>
 - Post-Quantum Ethereum — <https://pq.ethereum.org/>
+- EIP-2537, *Precompile for BLS12-381 curve operations* — <https://eips.ethereum.org/EIPS/eip-2537>
+- EIP-3607, *Reject transactions from senders with deployed code* — <https://eips.ethereum.org/EIPS/eip-3607>
+- EIP-7702, *Set EOA account code* — <https://eips.ethereum.org/EIPS/eip-7702>
+- EIP-7885, EIP-8141 and EIP-8151, the post-quantum account track — <https://eips.ethereum.org/EIPS/eip-7885>, <https://eips.ethereum.org/EIPS/eip-8141>, <https://eips.ethereum.org/EIPS/eip-8151>
+- RIP-7212, *Precompile for secp256r1 curve support* — <https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md>
 - `leanEthereum/leanVM` — <https://github.com/leanEthereum/leanVM>
 - `leanEthereum/leanSig` — <https://github.com/leanEthereum/leanSig>
-- `b-wagn/hash-sig`, eprint 2025/055 — <https://github.com/b-wagn/hash-sig>
+- `b-wagn/hash-sig`, *Hash-Based Multi-Signatures for Post-Quantum Ethereum*, eprint 2025/055 — <https://eprint.iacr.org/2025/055>, <https://github.com/b-wagn/hash-sig>
 - Ziren issue #276, *Replace hash-to-curve in multiset hash by quantum safe primitives* — <https://github.com/ProjectZKM/Ziren/issues/276>
 - CometBFT, `types/block.go` (`Commit`, `CommitSig`, `MaxCommitBytes`) — <https://github.com/cometbft/cometbft/blob/main/types/block.go>
 - CometBFT, `types/params.go` (`DefaultBlockParams`) — <https://github.com/cometbft/cometbft/blob/main/types/params.go>
 - CometBFT issue #3455, *BLS signature aggregation* — <https://github.com/cometbft/cometbft/issues/3455>
+- CometBFT issue #1305, *Halve commit size with partial ed25519 signatures* — <https://github.com/cometbft/cometbft/issues/1305>
+- CometBFT PRs #3632 and #4763, `crypto/bls12381` signature aggregation, both closed unmerged — <https://github.com/cometbft/cometbft/pull/3632>, <https://github.com/cometbft/cometbft/pull/4763>
 - A. Bienstock, L. de Castro, D. Escudero, A. Polychroniadou, A. Takahashi, *Quorus: Efficient, Scalable Threshold ML-DSA Signatures from MPC*, USENIX Security 2026 — <https://eprint.iacr.org/2025/1163>
 - S. Celi, R. del Pino, T. Espitau, G. Niot, T. Prest, *Efficient Threshold ML-DSA* — <https://eprint.iacr.org/2026/013>
 - K. Boudgoust, A. Takahashi, *Sequential Half-Aggregation of Lattice-Based Signatures*, ESORICS 2023 — <https://eprint.iacr.org/2023/159>
@@ -1471,13 +1489,17 @@ Primary sources. Verified live on 2026-07-31; the aggregation sources on
 - Bitcoin Core, `src/policy/policy.h` (`MAX_STANDARD_TX_WEIGHT`) — <https://github.com/bitcoin/bitcoin/blob/master/src/policy/policy.h>
 - `BitVM/BitVM`, `bitvm/src/bigint/mul.rs` — double-and-add multiplication in Bitcoin script — <https://github.com/bitvm/bitvm>
 - `Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31`, measured M31 script weights — <https://github.com/Bitcoin-Wildlife-Sanctuary/rust-bitcoin-m31>
+- Zisk, *Secure challenge derivation* (lattice-based multiset hashing) — <https://zisk.technology/secure-challenge-derivation-in-zisk/>
 - Ziren, `crates/primitives/src/lib.rs` (`Poseidon2KoalaBear<16>`, `ROUNDS_F = 8`, `ROUNDS_P = 13`) — <https://github.com/ProjectZKM/Ziren>
 - *Greyhound: Fast Polynomial Commitments from Lattices* — <https://eprint.iacr.org/2024/1293>
-- `AppliedPQC/bitcoin-stark-verifier` — Poseidon2 and a WHIR opening verifier in Bitcoin script, without `OP_CAT` — <https://github.com/AppliedPQC/bitcoin-stark-verifier>
+- `AppliedPQC/bitcoin-stark-verifier` — Poseidon2 and a WHIR opening verifier in Bitcoin script, without `OP_CAT`; source of every script-size figure in section 9 — <https://github.com/AppliedPQC/bitcoin-stark-verifier>
+- Plonky3 — the WHIR prover and KoalaBear Poseidon2 instance the measurements are taken against — <https://github.com/Plonky3/Plonky3>
+- Bitcoin Core, `src/consensus/consensus.h` (`MAX_BLOCK_WEIGHT`) — <https://github.com/bitcoin/bitcoin/blob/master/src/consensus/consensus.h>
 - BIP-347, *OP_CAT in Tapscript* (E. Heilman, A. Sabouri; Consensus soft fork, Complete, not activated) — <https://github.com/bitcoin/bips/blob/master/bip-0347.mediawiki>
 - `Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark`, a Circle STARK verifier in Bitcoin script — <https://github.com/Bitcoin-Wildlife-Sanctuary/bitcoin-circle-stark>
 - `GOATNetwork/goat` — <https://github.com/GOATNetwork/goat>
 - `GOATNetwork/goat-geth` — <https://github.com/GOATNetwork/goat-geth>
+- `GOATNetwork/BitVM` — the fork carrying the Winternitz implementation (`bitvm/src/signatures/`) — <https://github.com/GOATNetwork/BitVM>
 - `GOATNetwork/bitvm2-node` — <https://github.com/GOATNetwork/bitvm2-node>
 - `GOATNetwork/bitvm2-gc` — <https://github.com/GOATNetwork/bitvm2-gc>
 
